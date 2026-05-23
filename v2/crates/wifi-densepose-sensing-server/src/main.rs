@@ -4179,6 +4179,18 @@ async fn mesh_metrics_endpoint(State(state): State<SharedState>) -> impl IntoRes
         .filter_map(|(&id, ns)| ns.sync_snapshot().map(|snap| (id, snap)))
         .collect();
 
+    // Iter 37: fleet cardinality summary — Ops dashboards want the
+    // "how many leaders / followers / no-sync" tally at a glance
+    // without scraping every per-node series and counting.
+    let (leaders, followers) = fleet_role_counts(&snaps);
+    let no_sync = s.node_states.len().saturating_sub(snaps.len()) as u64;
+    let _ = writeln!(body,
+        "# HELP wifi_densepose_mesh_node_total Per-state node count across the fleet");
+    let _ = writeln!(body, "# TYPE wifi_densepose_mesh_node_total gauge");
+    let _ = writeln!(body, "wifi_densepose_mesh_node_total{{state=\"leader\"}} {leaders}");
+    let _ = writeln!(body, "wifi_densepose_mesh_node_total{{state=\"follower\"}} {followers}");
+    let _ = writeln!(body, "wifi_densepose_mesh_node_total{{state=\"no_sync\"}} {no_sync}");
+
     for (name, help, kind) in metrics {
         let _ = writeln!(body, "# HELP {name} {help}");
         let _ = writeln!(body, "# TYPE {name} {kind}");
@@ -4202,6 +4214,14 @@ async fn mesh_metrics_endpoint(State(state): State<SharedState>) -> impl IntoRes
 }
 
 fn bool_metric(b: bool) -> String { (if b { 1 } else { 0 }).to_string() }
+
+/// ADR-110 iter 37 — count (leaders, followers) in a populated snapshot set.
+/// Free function for testability — same pattern as iter 18's `update_csi_fps_ema`.
+pub(crate) fn fleet_role_counts(snaps: &[(u8, NodeSyncSnapshot)]) -> (u64, u64) {
+    let leaders = snaps.iter().filter(|(_, s)| s.is_leader).count() as u64;
+    let followers = (snaps.len() as u64).saturating_sub(leaders);
+    (leaders, followers)
+}
 
 async fn mesh_endpoint(State(state): State<SharedState>) -> Json<serde_json::Value> {
     let s = state.read().await;
@@ -6043,6 +6063,25 @@ mod sync_snapshot_helper_tests {
         // elapsed() within sync_snapshot.
         assert!(st >= 740 && st < 1250,
                 "expected ~750 ms staleness, got {} ms", st);
+    }
+
+    #[test]
+    fn fleet_role_counts_classifies_correctly() {
+        // Iter 37 — verify the leader/follower split that drives the
+        // Prometheus `wifi_densepose_mesh_node_total{state=...}` gauge.
+        // Local fixture rather than reaching across test modules.
+        fn snap(is_leader: bool) -> NodeSyncSnapshot {
+            NodeSyncSnapshot {
+                offset_us: 0, is_leader, is_valid: true, smoothed: true,
+                sequence: 0, csi_fps_ema: 10.0, csi_fps_samples: 10,
+                staleness_ms: Some(0),
+            }
+        }
+        assert_eq!(super::fleet_role_counts(&[]), (0, 0));
+        let snaps = vec![(12u8, snap(true)), (9, snap(false)), (3, snap(false))];
+        assert_eq!(super::fleet_role_counts(&snaps), (1, 2));
+        // Edge: all leaders (election would prevent this but gauge math must hold).
+        assert_eq!(super::fleet_role_counts(&[(1u8, snap(true)), (2, snap(true))]), (2, 0));
     }
 
     #[test]
