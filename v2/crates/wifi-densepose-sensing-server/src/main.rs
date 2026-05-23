@@ -4132,6 +4132,77 @@ async fn node_sync_endpoint(
 ///   200 → { "nodes": { "<id>": NodeSyncSnapshot, ... }, "total": N }
 ///   Nodes without a recent sync are omitted from the map; an empty
 ///   `nodes` object means no mesh peers reachable.
+/// ADR-110 iter 36 — Prometheus exposition format for mesh state.
+///
+/// GET /api/v1/mesh/metrics → text/plain
+///   wifi_densepose_mesh_offset_us{node="N"} <signed-int>
+///   wifi_densepose_mesh_is_leader{node="N"} 0|1
+///   wifi_densepose_mesh_is_valid{node="N"} 0|1
+///   wifi_densepose_mesh_smoothed{node="N"} 0|1
+///   wifi_densepose_mesh_sequence{node="N"} <u32>
+///   wifi_densepose_mesh_csi_fps{node="N"} <float>
+///   wifi_densepose_mesh_csi_fps_samples{node="N"} <u32>
+///   wifi_densepose_mesh_staleness_ms{node="N"} <u64>
+///
+/// Spec: <https://prometheus.io/docs/instrumenting/exposition_formats/>.
+/// Each metric is a gauge labeled by node_id. Nodes without a fresh sync
+/// are simply absent from the output (Prometheus handles missing series
+/// natively — the scrape just reports them as stale after the configured
+/// staleness duration).
+async fn mesh_metrics_endpoint(State(state): State<SharedState>) -> impl IntoResponse {
+    use std::fmt::Write;
+    let s = state.read().await;
+    let mut body = String::with_capacity(1024);
+
+    // Each metric: HELP + TYPE header + one line per node that has a snapshot.
+    let metrics: &[(&str, &str, &str)] = &[
+        ("wifi_densepose_mesh_offset_us",
+         "Cross-board mesh-aligned offset, microseconds (signed)", "gauge"),
+        ("wifi_densepose_mesh_is_leader",
+         "1 if this node is the elected mesh leader, else 0", "gauge"),
+        ("wifi_densepose_mesh_is_valid",
+         "1 if this node has heard a fresh leader beacon, else 0", "gauge"),
+        ("wifi_densepose_mesh_smoothed",
+         "1 once the firmware-side EMA filter has seeded, else 0", "gauge"),
+        ("wifi_densepose_mesh_sequence",
+         "High-water CSI sequence at sync emit time", "gauge"),
+        ("wifi_densepose_mesh_csi_fps",
+         "Per-node measured CSI frame rate (Hz)", "gauge"),
+        ("wifi_densepose_mesh_csi_fps_samples",
+         "How many inter-frame deltas the fps EMA has seen", "gauge"),
+        ("wifi_densepose_mesh_staleness_ms",
+         "Milliseconds since the host last received this node's sync packet", "gauge"),
+    ];
+
+    // Collect (id, snapshot) pairs once so each metric loop reads the same set.
+    let snaps: Vec<(u8, NodeSyncSnapshot)> = s.node_states.iter()
+        .filter_map(|(&id, ns)| ns.sync_snapshot().map(|snap| (id, snap)))
+        .collect();
+
+    for (name, help, kind) in metrics {
+        let _ = writeln!(body, "# HELP {name} {help}");
+        let _ = writeln!(body, "# TYPE {name} {kind}");
+        for (id, snap) in &snaps {
+            let value = match *name {
+                "wifi_densepose_mesh_offset_us" => snap.offset_us.to_string(),
+                "wifi_densepose_mesh_is_leader" => bool_metric(snap.is_leader),
+                "wifi_densepose_mesh_is_valid" => bool_metric(snap.is_valid),
+                "wifi_densepose_mesh_smoothed" => bool_metric(snap.smoothed),
+                "wifi_densepose_mesh_sequence" => snap.sequence.to_string(),
+                "wifi_densepose_mesh_csi_fps" => format!("{:.3}", snap.csi_fps_ema),
+                "wifi_densepose_mesh_csi_fps_samples" => snap.csi_fps_samples.to_string(),
+                "wifi_densepose_mesh_staleness_ms" =>
+                    snap.staleness_ms.map(|n| n.to_string()).unwrap_or_else(|| "0".into()),
+                _ => continue,
+            };
+            let _ = writeln!(body, "{name}{{node=\"{id}\"}} {value}");
+        }
+    }
+    ([(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4")], body)
+}
+
+fn bool_metric(b: bool) -> String { (if b { 1 } else { 0 }).to_string() }
+
 async fn mesh_endpoint(State(state): State<SharedState>) -> Json<serde_json::Value> {
     let s = state.read().await;
     let mut nodes = serde_json::Map::new();
@@ -5644,6 +5715,7 @@ async fn main() {
         // ADR-110 iter 29 — per-node mesh sync state for HTTP clients.
         .route("/api/v1/nodes/:id/sync", get(node_sync_endpoint))
         .route("/api/v1/mesh", get(mesh_endpoint))
+        .route("/api/v1/mesh/metrics", get(mesh_metrics_endpoint))
         // Vital sign endpoints
         .route("/api/v1/vital-signs", get(vital_signs_endpoint))
         .route("/api/v1/edge-vitals", get(edge_vitals_endpoint))
@@ -5971,6 +6043,16 @@ mod sync_snapshot_helper_tests {
         // elapsed() within sync_snapshot.
         assert!(st >= 740 && st < 1250,
                 "expected ~750 ms staleness, got {} ms", st);
+    }
+
+    #[test]
+    fn bool_metric_returns_zero_or_one_as_text() {
+        // Locks the Prometheus exposition convention: gauges holding a
+        // boolean state MUST emit literal "0" or "1", never "false"/"true".
+        // If anyone changes the helper to format!("{}", b), Prometheus will
+        // 400-reject the scrape — catch it here instead of in production.
+        assert_eq!(super::bool_metric(true), "1");
+        assert_eq!(super::bool_metric(false), "0");
     }
 
     #[test]
