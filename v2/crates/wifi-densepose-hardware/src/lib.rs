@@ -37,6 +37,7 @@
 mod csi_frame;
 mod error;
 mod esp32_parser;
+pub mod sync_packet;
 pub mod aggregator;
 mod bridge;
 pub mod esp32;
@@ -55,6 +56,9 @@ pub use esp32_parser::{
     RUVIEW_FEATURE_STATE_MAGIC, RUVIEW_TEMPORAL_MAGIC,
 };
 pub use bridge::CsiData;
+pub use sync_packet::{
+    SyncPacket, SyncPacketFlags, SYNC_PACKET_MAGIC, SYNC_PACKET_SIZE, SYNC_PACKET_PROTO_VER,
+};
 pub use radio_ops::{
     RadioOps, RadioMode, CaptureProfile, RadioHealth, RadioError, MockRadio,
     MeshRole, MeshMsgType, AuthClass, MeshHeader, NodeStatus, AnomalyAlert,
