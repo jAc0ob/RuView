@@ -1135,7 +1135,7 @@ python -m esptool --chip esp32s3 --port COM7 --baud 460800 \
   0xf000 ota_data_initial.bin 0x20000 esp32-csi-node.bin
 ```
 
-**4MB flash boards** (e.g. ESP32-S3 SuperMini 4MB): download the 4MB binaries from the [v0.4.3 release](https://github.com/ruvnet/RuView/releases/tag/v0.4.3-esp32) and use `--flash-size 4MB`:
+**4MB flash boards** (e.g. ESP32-S3 SuperMini 4MB): download `esp32-csi-node-s3-4mb.bin` + `partition-table-s3-4mb.bin` from the [v0.6.7 release](https://github.com/ruvnet/RuView/releases/tag/v0.6.7-esp32) (882 KB binary, 52 % partition slack) and use `--flash-size 4MB`:
 
 ```bash
 python -m esptool --chip esp32s3 --port COM7 --baud 460800 \
