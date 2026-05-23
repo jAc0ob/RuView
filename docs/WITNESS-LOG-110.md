@@ -63,6 +63,7 @@ After D1 confirmed the 802.15.4 RX path is unfixable from user code in this IDF 
 | `c6_sync_espnow_init()` succeeds at runtime | COM9 boot log: `I (5226) c6_espnow: init done: local_id=206ef117053c leader=yes(candidate) period=100ms` |
 | ESP-NOW TX path delivers reliably | COM9: `c6_espnow: tx#101 (fail=0) rx#0 (match=0)` over ~15 s — 100% TX success rate at the configured 100 ms cadence |
 | Build green for both targets | `firmware-ci.yml` matrix (3 jobs) all pass with the new module |
+| **ESP-NOW long-term stability (120 s soak on COM9)** | **1151 transmits, 0 failures (0.00 %), 9.6 tx/s sustained, no crash/reset in 2 min.** Boot detector saw exactly 1 `app_main` call. Sample summary: <br>`first: tx=1   fail=0 rx=0 match=0 leader=1 offset=0` <br>`last:  tx=1151 fail=0 rx=0 match=0 leader=1 offset=0` |
 
 The cross-board RX measurement was attempted but the other 3 boards (COM6/COM10/COM12) dropped off USB enumeration mid-experiment (presumably brown-out from repeated DTR/RTS resets) and couldn't be recovered without a physical replug. **Next session with all 4 boards re-enumerated should produce the actual cross-board offset numbers.** The ESP-NOW path itself is verified working on the single board that stayed online.
 
