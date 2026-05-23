@@ -20,15 +20,35 @@
 //! the active edit surface of the parallel ADR-110 agent — see
 //! [[feedback-multi-agent-worktree]]).
 
-#![cfg(feature = "mqtt")]
+// The full example body needs the `mqtt` feature (rumqttc, publisher::spawn,
+// etc.). When the feature is off we provide a stub `main` so the example
+// still compiles cleanly during a default `cargo build --workspace` —
+// otherwise CI fails with E0601 (`main function not found`) on every PR
+// that touches the workspace, even ones unrelated to ADR-115.
+#[cfg(not(feature = "mqtt"))]
+fn main() {
+    eprintln!(
+        "This example requires --features mqtt. Re-run with: \n  \
+         cargo run -p wifi-densepose-sensing-server --features mqtt \
+         --example mqtt_publisher -- --mqtt"
+    );
+    std::process::exit(2);
+}
 
+#[cfg(feature = "mqtt")]
 use std::sync::Arc;
+#[cfg(feature = "mqtt")]
 use std::time::Duration;
 
+#[cfg(feature = "mqtt")]
 use clap::Parser;
+#[cfg(feature = "mqtt")]
 use tokio::sync::broadcast;
+#[cfg(feature = "mqtt")]
 use tracing::info;
+#[cfg(feature = "mqtt")]
 use wifi_densepose_sensing_server::cli::Args;
+#[cfg(feature = "mqtt")]
 use wifi_densepose_sensing_server::mqtt::{
     config::MqttConfig,
     publisher::{spawn, OwnedDiscoveryBuilder},
@@ -36,6 +56,7 @@ use wifi_densepose_sensing_server::mqtt::{
     state::VitalsSnapshot,
 };
 
+#[cfg(feature = "mqtt")]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();

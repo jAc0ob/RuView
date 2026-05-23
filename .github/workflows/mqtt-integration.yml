@@ -27,18 +27,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
-    services:
-      mosquitto:
-        image: eclipse-mosquitto:2.0.18
-        ports:
-          - 11883:1883
-        # No auth — we test the wire shape, not auth. Production
-        # deployments enable mTLS per ADR-115 §3.9.
-        options: >-
-          --health-cmd "mosquitto_pub -h localhost -p 1883 -t healthcheck -m ok -q 0 || exit 0"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
+    # NB: we don't use a `services:` mosquitto container here because the
+    # eclipse-mosquitto:2.x image rejects anonymous connections by default
+    # and GH Actions `services` doesn't easily support mounting a custom
+    # config file. We start mosquitto manually in a step below with an
+    # inline `allow_anonymous true` config.
 
     env:
       RUVIEW_RUN_INTEGRATION: "1"
@@ -49,16 +42,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Wait for mosquitto to be reachable
+      - name: Install mosquitto + clients and start with allow_anonymous
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y mosquitto-clients
+          sudo apt-get update -qq
+          sudo apt-get install -y mosquitto mosquitto-clients
+          sudo systemctl stop mosquitto || true
+          # Inline config: anon listener on 11883 only — no TLS, no auth,
+          # OK for CI because we test the wire shape, not security.
+          # Production deployments enable mTLS per ADR-115 §3.9.
+          cat > /tmp/mosquitto-ci.conf <<'EOF'
+          listener 11883
+          allow_anonymous true
+          persistence false
+          log_dest stdout
+          EOF
+          mosquitto -c /tmp/mosquitto-ci.conf -d
           for i in {1..20}; do
-            if mosquitto_pub -h 127.0.0.1 -p 11883 -t healthcheck -m ok -q 0; then
+            if mosquitto_pub -h 127.0.0.1 -p 11883 -t healthcheck -m ok -q 0 2>/dev/null; then
               echo "mosquitto reachable on 11883"; exit 0
             fi
             sleep 2
           done
-          echo "mosquitto never became reachable" >&2; exit 1
+          echo "mosquitto never became reachable" >&2
+          tail -50 /var/log/mosquitto/*.log 2>/dev/null || true
+          exit 1
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
