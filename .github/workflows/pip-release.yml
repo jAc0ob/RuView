@@ -13,13 +13,10 @@
 #   1. cut tag `v1.99.0-pip`  → publishes the tombstone wheel first
 #   2. cut tag `v2.0.0-pip`   → publishes the PyO3 v2 wheel matrix
 #
-# Publishes via PyPI API token stored in the `PYPI_API_TOKEN`
-# GitHub Actions secret. The token value comes from the GCP Secret
-# Manager entry `PYPI_TOKEN` in project `cognitum-20260110`; refresh
-# with:
-#     gcloud secrets versions access latest --secret=PYPI_TOKEN \
-#         --project=cognitum-20260110 \
-#       | gh secret set PYPI_API_TOKEN --repo ruvnet/RuView
+# Publishes via the `PYPI_API_TOKEN` GitHub Actions secret. The
+# token-refresh runbook (GCP Secret Manager → gh secret set) lives in
+# docs/integrations/pypi-release.md so KICS does not flag the
+# secret name as a generic-secret literal in the workflow.
 #
 # Q3 (witness hash v2 — open in ADR-117 §11.3) MUST be resolved
 # before the first v2.0.0 publish. When v2 lands, add a parallel
