@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RuView Dev Dashboard</title>
+<style>
+:root {
+    --g:  #00f5a0;
+    --g2: rgba(0,245,160,0.08);
+    --r:  #ff4757;
+    --y:  #ffd32a;
+    --b:  #3d9cf5;
+    --bg: #080c0e;
+    --panel: #0d1419;
+    --border: rgba(0,245,160,0.18);
+    --text: rgba(255,255,255,0.82);
+    --dim: rgba(255,255,255,0.35);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: 'Courier New', monospace; font-size: 13px; }
+
+/* ── Layout ── */
+#layout {
+    display: grid;
+    grid-template-columns: 260px 1fr 320px;
+    grid-template-rows: 42px 1fr 220px;
+    height: 100vh; gap: 2px; background: #000;
+}
+
+/* ── Topbar ── */
+#topbar {
+    grid-column: 1 / -1; background: var(--panel);
+    display: flex; align-items: center; gap: 18px; padding: 0 16px;
+    border-bottom: 1px solid var(--border);
+}
+.logo { font-size: 15px; font-weight: bold; color: var(--g); letter-spacing: 3px; }
+.tb-sep { width: 1px; height: 22px; background: var(--border); }
+.tb-stat { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--dim); }
+.tb-dot  { width: 7px; height: 7px; border-radius: 50%; background: var(--r); flex-shrink: 0; }
+.tb-dot.live { background: var(--g); }
+.tb-dot.warn { background: var(--y); animation: blink .9s infinite; }
+.tb-val  { color: var(--g); font-weight: bold; }
+#tb-fps  { margin-left: auto; font-size: 10px; color: var(--dim); }
+#tb-time { font-size: 10px; color: var(--dim); min-width: 60px; text-align: right; }
+
+/* ── Shared panel ── */
+.panel {
+    background: var(--panel); display: flex; flex-direction: column; overflow: hidden;
+}
+.panel-hdr {
+    display: flex; align-items: center; padding: 8px 12px;
+    border-bottom: 1px solid var(--border); flex-shrink: 0; gap: 8px;
+}
+.panel-title { font-size: 10px; color: var(--g); letter-spacing: 2px; flex: 1; }
+.panel-body  { flex: 1; overflow: hidden; position: relative; }
+.panel-scroll { flex: 1; overflow-y: auto; padding: 10px 12px; }
+
+/* ── Left: node list ── */
+#left { grid-column: 1; grid-row: 2; }
+.node-card {
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+    margin-bottom: 8px; background: var(--g2);
+}
+.node-card-hdr { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.node-id { font-size: 11px; font-weight: bold; color: var(--g); }
+.node-ip { font-size: 10px; color: var(--dim); flex: 1; }
+.node-rssi { font-size: 11px; }
+.node-row { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px; }
+.node-lbl { color: var(--dim); }
+.node-v   { color: var(--text); }
+.signal-bar { height: 3px; background: rgba(0,245,160,0.15); border-radius: 2px; margin-top: 8px; overflow: hidden; }
+.signal-fill { height: 100%; background: var(--g); transition: width .4s; border-radius: 2px; }
+
+/* ── Center top: signal field heatmap ── */
+#center-top { grid-column: 2; grid-row: 2; position: relative; }
+#field-canvas { width: 100%; height: 100%; }
+#presence-overlay {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    display: flex; flex-direction: column; align-items: center; pointer-events: none;
+}
+.pres-count { font-size: 52px; font-weight: bold; color: var(--g); text-shadow: 0 0 30px var(--g); line-height: 1; }
+.pres-label { font-size: 11px; color: rgba(0,245,160,0.5); letter-spacing: 3px; }
+
+/* ── Right: vitals + AI ── */
+#right { grid-column: 3; grid-row: 2; display: flex; flex-direction: column; gap: 2px; }
+#vitals-panel { flex: 0 0 auto; }
+#ai-panel-dev { flex: 1; min-height: 0; }
+
+.vital-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px; }
+.vital-card {
+    background: var(--g2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 12px;
+}
+.vital-card-lbl { font-size: 9px; color: var(--dim); letter-spacing: 1px; margin-bottom: 4px; }
+.vital-card-val { font-size: 22px; font-weight: bold; color: var(--g); }
+.vital-card-unit { font-size: 10px; color: var(--dim); margin-left: 2px; }
+.vital-card-val.absent { color: rgba(255,255,255,0.2); font-size: 16px; }
+
+/* AI chat */
+#ai-dev-msgs {
+    flex: 1; overflow-y: auto; padding: 10px 12px; display: flex;
+    flex-direction: column; gap: 8px;
+}
+.dev-msg { display: flex; gap: 6px; align-items: flex-start; }
+.dev-msg.user { flex-direction: row-reverse; }
+.dev-bubble {
+    max-width: 88%; padding: 7px 10px; border-radius: 10px;
+    font-size: 12px; line-height: 1.5; white-space: pre-wrap;
+}
+.dev-msg.user      .dev-bubble { background: rgba(0,245,160,0.12); color: var(--g); border-radius: 10px 10px 0 10px; }
+.dev-msg.assistant .dev-bubble { background: rgba(255,255,255,0.05); color: var(--text); border-radius: 10px 10px 10px 0; }
+.dev-msg.assistant .dev-bubble.streaming::after { content: '▋'; animation: blink .6s infinite; }
+.dev-chips { display: flex; gap: 5px; padding: 0 10px 6px; flex-wrap: wrap; flex-shrink: 0; }
+.dev-chip  {
+    background: var(--g2); border: 1px solid var(--border); border-radius: 10px;
+    padding: 3px 8px; font-size: 10px; color: rgba(0,245,160,0.65); cursor: pointer;
+}
+#dev-ai-input-row { display: flex; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--border); flex-shrink: 0; }
+#dev-ai-input {
+    flex: 1; background: var(--g2); border: 1px solid var(--border); border-radius: 6px;
+    padding: 7px 10px; color: var(--g); font-family: monospace; font-size: 12px; resize: none; max-height: 60px;
+}
+#dev-ai-send {
+    width: 32px; height: 32px; border-radius: 6px; background: var(--g); border: none;
+    color: #000; font-size: 14px; cursor: pointer; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+}
+#dev-ai-send:disabled { background: rgba(0,245,160,0.15); cursor: default; }
+#dev-model-select {
+    background: var(--g2); border: 1px solid var(--border); border-radius: 5px;
+    color: var(--g); font-size: 10px; padding: 2px 6px; font-family: monospace; cursor: pointer;
+}
+
+/* ── Bottom: CSI subcarrier amplitude graph ── */
+#bottom { grid-column: 1 / -1; grid-row: 3; }
+#csi-canvas { width: 100%; height: 100%; }
+
+/* ── Scrollbars ── */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(0,245,160,0.25); border-radius: 2px; }
+
+@keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.2; } }
+</style>
+</head>
+<body>
+<div id="layout">
+
+    <!-- Topbar -->
+    <div id="topbar">
+        <span class="logo">RUVIEW</span>
+        <div class="tb-sep"></div>
+        <div class="tb-stat"><div class="tb-dot" id="ws-dot"></div><span id="tb-status">Connecting…</span></div>
+        <div class="tb-sep"></div>
+        <div class="tb-stat">NODES <span class="tb-val" id="tb-nodes">0</span></div>
+        <div class="tb-stat">PERSONS <span class="tb-val" id="tb-persons">—</span></div>
+        <div class="tb-stat">MOTION <span class="tb-val" id="tb-motion">—</span></div>
+        <div class="tb-stat">HR <span class="tb-val" id="tb-hr">—</span></div>
+        <div class="tb-stat">BR <span class="tb-val" id="tb-br">—</span></div>
+        <span id="tb-fps"></span>
+        <span id="tb-time"></span>
+    </div>
+
+    <!-- Left: node cards -->
+    <div class="panel" id="left">
+        <div class="panel-hdr">
+            <span class="panel-title">NODES</span>
+            <a href="xray.html" style="font-size:10px;color:var(--dim);text-decoration:none">📱 X-Ray</a>
+        </div>
+        <div class="panel-scroll" id="node-list"></div>
+    </div>
+
+    <!-- Center: field heatmap -->
+    <div class="panel" id="center-top">
+        <div class="panel-hdr"><span class="panel-title">SIGNAL FIELD — FLOOR PLAN</span></div>
+        <div class="panel-body">
+            <canvas id="field-canvas"></canvas>
+            <div id="presence-overlay">
+                <div class="pres-count" id="pres-count" style="display:none">0</div>
+                <div class="pres-label" id="pres-label" style="display:none">DETECTED</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right: vitals + AI -->
+    <div id="right">
+        <div class="panel" id="vitals-panel">
+            <div class="panel-hdr"><span class="panel-title">VITALS</span></div>
+            <div class="vital-grid">
+                <div class="vital-card">
+                    <div class="vital-card-lbl">HEART RATE</div>
+                    <div><span class="vital-card-val absent" id="vc-hr">—</span><span class="vital-card-unit" id="vc-hr-u"></span></div>
+                </div>
+                <div class="vital-card">
+                    <div class="vital-card-lbl">BREATHING</div>
+                    <div><span class="vital-card-val absent" id="vc-br">—</span><span class="vital-card-unit" id="vc-br-u"></span></div>
+                </div>
+                <div class="vital-card">
+                    <div class="vital-card-lbl">CONFIDENCE</div>
+                    <div><span class="vital-card-val absent" id="vc-conf">—</span><span class="vital-card-unit" id="vc-conf-u"></span></div>
+                </div>
+                <div class="vital-card">
+                    <div class="vital-card-lbl">FALL RISK</div>
+                    <div><span class="vital-card-val absent" id="vc-fall">—</span></div>
+                </div>
+            </div>
+        </div>
+        <div class="panel" id="ai-panel-dev" style="display:flex;flex-direction:column">
+            <div class="panel-hdr">
+                <span class="panel-title">AI ASSISTANT</span>
+                <select id="dev-model-select" title="AI model" aria-label="AI model">
+                    <option value="llama3.2">llama3.2</option>
+                    <option value="llama3.1">llama3.1</option>
+                    <option value="mistral">mistral</option>
+                    <option value="phi3">phi3</option>
+                    <option value="gemma3">gemma3</option>
+                </select>
+            </div>
+            <div id="ai-dev-msgs"></div>
+            <div class="dev-chips">
+                <div class="dev-chip">Room status?</div>
+                <div class="dev-chip">Vital signs?</div>
+                <div class="dev-chip">Any anomalies?</div>
+                <div class="dev-chip">Node health?</div>
+            </div>
+            <div id="dev-ai-input-row">
+                <textarea id="dev-ai-input" placeholder="Ask about the room…" rows="1"></textarea>
+                <button id="dev-ai-send" type="button">↑</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bottom: CSI amplitude graph -->
+    <div class="panel" id="bottom">
+        <div class="panel-hdr">
+            <span class="panel-title">CSI SUBCARRIER AMPLITUDE — ALL NODES</span>
+            <span id="csi-fps" style="font-size:10px;color:var(--dim)"></span>
+        </div>
+        <div class="panel-body"><canvas id="csi-canvas"></canvas></div>
+    </div>
+</div>
+
+<script>
+// ─── Config ───────────────────────────────────────────────────────────────────
+const WS_URL = (() => {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const h = location.hostname;
+    const portMap = { '3000':'3001', '8080':'8765', '8443':'8443' };
+    const wp = portMap[location.port] || location.port || '8765';
+    return `${proto}//${h}:${wp}/ws/sensing`;
+})();
+
+// ─── State ────────────────────────────────────────────────────────────────────
+let lastData = null, ws = null, wsRetries = 0;
+let smoothHR = null, smoothBR = null;
+let presRing = new Array(10).fill(false);
+let frameCount = 0, lastFpsTs = performance.now();
+let csiHistory = [];       // ring buffer of amplitude arrays for the graph
+const CSI_HISTORY = 120;   // frames kept in the graph ring buffer
+let aiStreaming = false;
+let aiHistory = [];
+
+const DPR = window.devicePixelRatio || 1;
+
+// ─── DOM ──────────────────────────────────────────────────────────────────────
+const wsDot     = document.getElementById('ws-dot');
+const tbStatus  = document.getElementById('tb-status');
+const tbNodes   = document.getElementById('tb-nodes');
+const tbPersons = document.getElementById('tb-persons');
+const tbMotion  = document.getElementById('tb-motion');
+const tbHR      = document.getElementById('tb-hr');
+const tbBR      = document.getElementById('tb-br');
+const tbFps     = document.getElementById('tb-fps');
+const tbTime    = document.getElementById('tb-time');
+const nodeList  = document.getElementById('node-list');
+const presCount = document.getElementById('pres-count');
+const presLabel = document.getElementById('pres-label');
+
+const fieldCv   = document.getElementById('field-canvas');
+const fieldCtx  = fieldCv.getContext('2d');
+const csiCv     = document.getElementById('csi-canvas');
+const csiCtx    = csiCv.getContext('2d');
+
+// ─── Clock ────────────────────────────────────────────────────────────────────
+setInterval(() => { tbTime.textContent = new Date().toLocaleTimeString(); }, 1000);
+
+// ─── WebSocket ────────────────────────────────────────────────────────────────
+function connectWs() {
+    wsDot.className = 'tb-dot warn';
+    tbStatus.textContent = `Connecting to ${WS_URL}…`;
+    ws = new WebSocket(WS_URL);
+    ws.onopen  = () => { wsRetries = 0; wsDot.className = 'tb-dot live'; tbStatus.textContent = 'Live'; };
+    ws.onmessage = e => { try { lastData = JSON.parse(e.data); onData(lastData); } catch {} };
+    ws.onclose = () => {
+        wsDot.className = 'tb-dot warn';
+        tbStatus.textContent = 'Reconnecting…';
+        setTimeout(connectWs, Math.min(500 * Math.pow(1.6, wsRetries++), 15000));
+    };
+    ws.onerror = () => ws.close();
+}
+
+// ─── Data processing ──────────────────────────────────────────────────────────
+function lerp(a, b, t) { return a + (b - a) * t; }
+
+function onData(d) {
+    frameCount++;
+
+    // FPS
+    const now = performance.now();
+    if (now - lastFpsTs > 1000) {
+        tbFps.textContent = `${frameCount} fps`;
+        frameCount = 0;
+        lastFpsTs = now;
+    }
+
+    // Presence ring
+    const pres = d.classification?.presence ?? false;
+    presRing.shift(); presRing.push(pres);
+    const presConf = presRing.filter(Boolean).length >= 5;
+
+    // Vitals smoothing
+    const vs = d.vital_signs;
+    if (vs && presConf) {
+        if (vs.heart_rate_bpm    > 0 && vs.heart_rate_confidence    > 0.35)
+            smoothHR = smoothHR == null ? vs.heart_rate_bpm    : lerp(smoothHR, vs.heart_rate_bpm, 0.1);
+        if (vs.breathing_rate_rpm > 0 && vs.breathing_confidence > 0.35)
+            smoothBR = smoothBR == null ? vs.breathing_rate_rpm : lerp(smoothBR, vs.breathing_rate_rpm, 0.1);
+    } else if (!presConf) { smoothHR = null; smoothBR = null; }
+
+    // CSI amplitude into history (from first node)
+    const firstNode = d.nodes?.[0];
+    if (firstNode?.amplitude) {
+        csiHistory.push(firstNode.amplitude.slice());
+        if (csiHistory.length > CSI_HISTORY) csiHistory.shift();
+    }
+
+    updateTopbar(d, presConf);
+    updateNodeCards(d);
+    updateVitalsCards(d, presConf);
+    drawFieldHeatmap(d);
+    drawCsiGraph();
+    updatePresenceBadge(d, presConf);
+}
+
+// ─── Topbar ───────────────────────────────────────────────────────────────────
+function updateTopbar(d, presConf) {
+    tbNodes.textContent   = d.nodes?.length ?? 0;
+    tbPersons.textContent = presConf ? (d.estimated_persons ?? 1) : '—';
+    tbMotion.textContent  = d.classification?.motion_level?.slice(0,7).toUpperCase() ?? '—';
+    tbHR.textContent = smoothHR != null ? `${Math.round(smoothHR)} bpm` : '—';
+    tbBR.textContent = smoothBR != null ? `${Math.round(smoothBR)} rpm` : '—';
+}
+
+// ─── Node cards ───────────────────────────────────────────────────────────────
+function updateNodeCards(d) {
+    const nodes = d.nodes ?? [];
+    nodeList.innerHTML = '';
+    if (nodes.length === 0) {
+        nodeList.innerHTML = '<div style="color:var(--dim);font-size:11px;padding:8px">No nodes connected</div>';
+        return;
+    }
+    nodes.forEach(n => {
+        const rssi = n.rssi_dbm ?? -100;
+        const rssiPct = Math.max(0, Math.min(100, (rssi + 100) * 2));
+        const rssiColor = rssi > -60 ? 'var(--g)' : rssi > -75 ? 'var(--y)' : 'var(--r)';
+        const sync = n.sync;
+        const card = document.createElement('div');
+        card.className = 'node-card';
+        card.innerHTML = `
+            <div class="node-card-hdr">
+                <span class="node-id">NODE ${n.node_id}</span>
+                <span class="node-ip">${n.position ? `[${n.position.map(v=>v.toFixed(1)).join(', ')}]` : 'pos unknown'}</span>
+                <span class="node-rssi" style="color:${rssiColor}">${rssi} dBm</span>
+            </div>
+            <div class="node-row"><span class="node-lbl">CSI fps</span><span class="node-v">${sync?.csi_fps_ema?.toFixed(1) ?? '—'}</span></div>
+            <div class="node-row"><span class="node-lbl">Clock offset</span><span class="node-v">${sync?.offset_us != null ? sync.offset_us + ' µs' : '—'}</span></div>
+            <div class="node-row"><span class="node-lbl">Mesh role</span><span class="node-v">${sync?.is_leader ? '👑 leader' : 'follower'}</span></div>
+            <div class="node-row"><span class="node-lbl">Staleness</span><span class="node-v">${sync?.staleness_ms != null ? sync.staleness_ms + ' ms' : '—'}</span></div>
+            <div class="signal-bar"><div class="signal-fill" style="width:${rssiPct}%;background:${rssiColor}"></div></div>`;
+        nodeList.appendChild(card);
+    });
+}
+
+// ─── Vitals cards ─────────────────────────────────────────────────────────────
+function setVC(id, unitId, val, unit, on) {
+    const el = document.getElementById(id);
+    const uel = unitId ? document.getElementById(unitId) : null;
+    if (on && val != null) {
+        el.textContent = val; el.className = 'vital-card-val';
+        if (uel) uel.textContent = unit;
+    } else {
+        el.textContent = '—'; el.className = 'vital-card-val absent';
+        if (uel) uel.textContent = '';
+    }
+}
+function updateVitalsCards(d, presConf) {
+    setVC('vc-hr',   'vc-hr-u',   smoothHR != null ? Math.round(smoothHR) : null, ' bpm', smoothHR != null);
+    setVC('vc-br',   'vc-br-u',   smoothBR != null ? Math.round(smoothBR) : null, ' rpm', smoothBR != null);
+    const conf = d.classification?.confidence;
+    setVC('vc-conf', 'vc-conf-u', conf != null ? Math.round(conf * 100) : null, '%', conf != null);
+    // Simple fall proxy: phase_acceleration from features if present
+    const fall = d.features?.spectral_power > 0.7;
+    setVC('vc-fall', null, presConf && fall ? 'HIGH' : presConf ? 'LOW' : null, '', presConf);
+    const fallEl = document.getElementById('vc-fall');
+    if (presConf) fallEl.style.color = fall ? 'var(--r)' : 'var(--g)';
+}
+
+// ─── Presence badge ───────────────────────────────────────────────────────────
+function updatePresenceBadge(d, presConf) {
+    const n = d.estimated_persons ?? (presConf ? 1 : 0);
+    if (presConf && n > 0) {
+        presCount.textContent = n;
+        presCount.style.display = presLabel.style.display = '';
+    } else {
+        presCount.style.display = presLabel.style.display = 'none';
+    }
+}
+
+// ─── Field heatmap ────────────────────────────────────────────────────────────
+function resizeCanvas(cv) {
+    const rect = cv.parentElement.getBoundingClientRect();
+    if (cv.width !== rect.width * DPR || cv.height !== rect.height * DPR) {
+        cv.width = rect.width * DPR;
+        cv.height = rect.height * DPR;
+        cv.style.width  = rect.width  + 'px';
+        cv.style.height = rect.height + 'px';
+    }
+}
+
+function drawFieldHeatmap(d) {
+    resizeCanvas(fieldCv);
+    const W = fieldCv.width / DPR, H = fieldCv.height / DPR;
+    fieldCtx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    fieldCtx.clearRect(0, 0, W, H);
+
+    if (!d.signal_field?.values) {
+        fieldCtx.fillStyle = 'rgba(0,245,160,0.08)';
+        fieldCtx.fillRect(0, 0, W, H);
+        fieldCtx.fillStyle = 'rgba(0,245,160,0.25)';
+        fieldCtx.font = '12px monospace';
+        fieldCtx.textAlign = 'center';
+        fieldCtx.fillText('No signal field data', W / 2, H / 2);
+        return;
+    }
+
+    const [gx, , gz] = d.signal_field.grid_size;
+    const vals = d.signal_field.values;
+    const cw = W / gx, ch = H / gz;
+
+    for (let z = 0; z < gz; z++) {
+        for (let x = 0; x < gx; x++) {
+            const v = vals[z * gx + x] || 0;
+            if (v < 0.01) continue;
+            // Blue → cyan → green gradient by intensity
+            const r = Math.round(0   + v * 0);
+            const g = Math.round(80  + v * 175);
+            const b = Math.round(255 - v * 155);
+            fieldCtx.fillStyle = `rgba(${r},${g},${b},${(v * 0.75).toFixed(3)})`;
+            fieldCtx.fillRect(x * cw, z * ch, cw + 0.5, ch + 0.5);
+        }
+    }
+
+    // Node dots
+    (d.nodes ?? []).forEach(n => {
+        const [nx,,nz] = n.position ?? [0, 0, 0];
+        // Normalise position into grid space (approximate)
+        const nodesAll = d.nodes.map(nn => nn.position ?? [0,0,0]);
+        const xs = nodesAll.map(p => p[0]), zs = nodesAll.map(p => p[2]);
+        const pad = 1.5;
+        const minX = Math.min(...xs) - pad, maxX = Math.max(...xs) + pad;
+        const minZ = Math.min(...zs) - pad, maxZ = Math.max(...zs) + pad;
+        const sx = W * ((nx - minX) / ((maxX - minX) || 10));
+        const sy = H * ((nz - minZ) / ((maxZ - minZ) || 10));
+        fieldCtx.beginPath(); fieldCtx.arc(sx, sy, 5, 0, Math.PI * 2);
+        fieldCtx.fillStyle = 'var(--g)'; fieldCtx.fill();
+        fieldCtx.fillStyle = 'rgba(0,0,0,0.8)'; fieldCtx.font = 'bold 9px monospace';
+        fieldCtx.textAlign = 'center'; fieldCtx.fillText(`N${n.node_id}`, sx, sy - 8);
+    });
+}
+
+// ─── CSI amplitude waterfall graph ────────────────────────────────────────────
+function drawCsiGraph() {
+    resizeCanvas(csiCv);
+    const W = csiCv.width / DPR, H = csiCv.height / DPR;
+    csiCtx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    csiCtx.clearRect(0, 0, W, H);
+
+    if (csiHistory.length === 0) {
+        csiCtx.fillStyle = 'rgba(0,245,160,0.2)';
+        csiCtx.font = '11px monospace'; csiCtx.textAlign = 'center';
+        csiCtx.fillText('Waiting for CSI data…', W / 2, H / 2);
+        return;
+    }
+
+    // Waterfall: x = subcarrier index, y = time (newest at bottom)
+    // Each row is one frame, colour = amplitude
+    const nFrames = csiHistory.length;
+    const nSubs   = csiHistory[0].length;
+    const rowH = H / CSI_HISTORY;
+    const colW = W / nSubs;
+
+    // Find global max for normalisation
+    let gMax = 0;
+    csiHistory.forEach(row => row.forEach(v => { if (v > gMax) gMax = v; }));
+    if (gMax === 0) gMax = 1;
+
+    csiHistory.forEach((row, fi) => {
+        const y = (CSI_HISTORY - nFrames + fi) * rowH;
+        row.forEach((v, si) => {
+            const norm = v / gMax;
+            // Colour: dark blue (low) → cyan → green (high)
+            const r = Math.round(0   * (1 - norm) + 0   * norm);
+            const g = Math.round(60  * (1 - norm) + 245 * norm);
+            const b = Math.round(120 * (1 - norm) + 80  * norm);
+            csiCtx.fillStyle = `rgb(${r},${g},${b})`;
+            csiCtx.fillRect(si * colW, y, colW + 0.5, rowH + 0.5);
+        });
+    });
+
+    // Subcarrier index labels
+    csiCtx.fillStyle = 'rgba(0,0,0,0.5)';
+    csiCtx.fillRect(0, 0, W, 14);
+    csiCtx.fillStyle = 'rgba(0,245,160,0.5)';
+    csiCtx.font = '9px monospace'; csiCtx.textAlign = 'center';
+    const step = Math.ceil(nSubs / 12);
+    for (let i = 0; i < nSubs; i += step) {
+        csiCtx.fillText(i, i * colW + colW / 2, 10);
+    }
+    document.getElementById('csi-fps').textContent = `${nSubs} subcarriers · ${nFrames} frames`;
+}
+
+// ─── AI chat (dev panel) ──────────────────────────────────────────────────────
+const devMsgs      = document.getElementById('ai-dev-msgs');
+const devInput     = document.getElementById('dev-ai-input');
+const devSend      = document.getElementById('dev-ai-send');
+const devModelSel  = document.getElementById('dev-model-select');
+
+function sensingCtx() {
+    if (!lastData) return 'No sensing data yet.';
+    const d = lastData;
+    const pres = d.classification?.presence;
+    const nP   = d.estimated_persons ?? (pres ? 1 : 0);
+    const hr   = smoothHR ? `${Math.round(smoothHR)} bpm` : 'unavailable';
+    const br   = smoothBR ? `${Math.round(smoothBR)} rpm` : 'unavailable';
+    const nodes = (d.nodes ?? []).map(n => `Node ${n.node_id} RSSI=${n.rssi_dbm ?? '?'}dBm fps=${n.sync?.csi_fps_ema?.toFixed(1) ?? '?'}`).join('\n  ');
+    return `Nodes:\n  ${nodes}\nPresence: ${pres?'YES':'NO'} (${nP} person${nP!==1?'s':''})\nMotion: ${d.classification?.motion_level ?? 'unknown'}\nHeart rate: ${hr}\nBreathing: ${br}`;
+}
+
+function devAddMsg(role, text, streaming = false) {
+    const wrap = document.createElement('div');
+    wrap.className = `dev-msg ${role}`;
+    const bubble = document.createElement('div');
+    bubble.className = 'dev-bubble' + (streaming ? ' streaming' : '');
+    bubble.textContent = text;
+    wrap.appendChild(bubble);
+    devMsgs.appendChild(wrap);
+    devMsgs.scrollTop = devMsgs.scrollHeight;
+    return bubble;
+}
+
+async function devSendAI(text) {
+    if (aiStreaming || !text.trim()) return;
+    aiStreaming = true; devSend.disabled = true;
+
+    aiHistory.push({ role: 'user', content: text });
+    devAddMsg('user', text);
+    devInput.value = '';
+
+    const systemPrompt = `You are RuView AI, a room sensing assistant for a developer dashboard.\n\nCurrent state:\n${sensingCtx()}\n\nBe concise and technical.`;
+    const body = JSON.stringify({
+        model: devModelSel.value, stream: true,
+        messages: [{ role: 'system', content: systemPrompt }, ...aiHistory],
+    });
+
+    const bubble = devAddMsg('assistant', '', true);
+    try {
+        const resp = await fetch('/ai/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            bubble.textContent = `⚠ ${err.error || resp.statusText}${err.hint ? '\n' + err.hint : ''}`;
+        } else {
+            const reader = resp.body.getReader();
+            const dec = new TextDecoder();
+            let full = '';
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                dec.decode(value).split('\n').forEach(l => {
+                    if (!l.trim()) return;
+                    try { const c = JSON.parse(l); full += c.message?.content ?? ''; bubble.textContent = full; devMsgs.scrollTop = devMsgs.scrollHeight; } catch {}
+                });
+            }
+            aiHistory.push({ role: 'assistant', content: full });
+        }
+    } catch { bubble.textContent = '⚠ Ollama offline — run: ollama serve'; }
+    bubble.classList.remove('streaming');
+    aiStreaming = false; devSend.disabled = false;
+}
+
+devSend.addEventListener('click', () => devSendAI(devInput.value));
+devInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); devSendAI(devInput.value); } });
+document.querySelectorAll('.dev-chip').forEach(c => c.addEventListener('click', () => devSendAI(c.textContent)));
+
+// ─── Resize observer ──────────────────────────────────────────────────────────
+new ResizeObserver(() => {
+    if (lastData) { drawFieldHeatmap(lastData); drawCsiGraph(); }
+}).observe(document.getElementById('center-top'));
+new ResizeObserver(() => { if (lastData) drawCsiGraph(); }).observe(document.getElementById('bottom'));
+
+// ─── Boot ─────────────────────────────────────────────────────────────────────
+connectWs();
+</script>
+</body>
+</html>

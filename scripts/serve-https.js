@@ -117,7 +117,9 @@ function serveFile(res, filePath, allowedRoot) {
     fs.createReadStream(safe).pipe(res);
 }
 
-const HTTP_PORT = parseInt(arg('--http-port', '8080'));
+const HTTP_PORT   = parseInt(arg('--http-port',   '8080'));
+const OLLAMA_PORT = parseInt(arg('--ollama-port', '11434'));
+const OLLAMA_HOST = arg('--ollama-host', '127.0.0.1');
 
 // Proxy REST API calls to the Rust sensing server over plain HTTP.
 function proxyApi(req, res) {
@@ -136,6 +138,35 @@ function proxyApi(req, res) {
     upstream.on('error', () => {
         res.writeHead(502);
         res.end(JSON.stringify({ error: 'sensing server offline', hint: `start: cd v2 && cargo run -p wifi-densepose-sensing-server -- --bind-addr 0.0.0.0 --allowed-host ${localIP()}` }));
+    });
+    req.pipe(upstream);
+}
+
+// Proxy /ai/* → Ollama local LLM (http://localhost:11434).
+// Passes streaming NDJSON straight through so the browser can consume it.
+function proxyOllama(req, res) {
+    const ollamaPath = req.url.replace(/^\/ai/, '');
+    const opts = {
+        hostname: OLLAMA_HOST, port: OLLAMA_PORT,
+        path: ollamaPath || '/',
+        method: req.method,
+        headers: { ...req.headers, host: `${OLLAMA_HOST}:${OLLAMA_PORT}` },
+    };
+    const upstream = http.request(opts, upRes => {
+        res.writeHead(upRes.statusCode, {
+            ...upRes.headers,
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Headers': 'Content-Type',
+            'Cache-Control': 'no-cache',
+        });
+        upRes.pipe(res);
+    });
+    upstream.on('error', () => {
+        res.writeHead(502);
+        res.end(JSON.stringify({
+            error: 'Ollama not running',
+            hint: 'Install Ollama from https://ollama.com then: ollama serve  (and: ollama pull llama3.2)',
+        }));
     });
     req.pipe(upstream);
 }
@@ -172,6 +203,21 @@ function proxyNode(req, res, nodeIp, nodePath) {
 function onRequest(req, res) {
     let urlPath = decodeURIComponent(req.url.split('?')[0]);
     urlPath = path.posix.normalize(urlPath).replace(/^(\.\.\/)+/, '');
+
+    // CORS preflight for cross-origin POST (Ollama, node config)
+    if (req.method === 'OPTIONS') {
+        res.writeHead(204, {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+            'Access-Control-Max-Age': '86400',
+        });
+        res.end();
+        return;
+    }
+
+    // Proxy /ai/* → Ollama
+    if (urlPath.startsWith('/ai/')) return proxyOllama(req, res);
 
     // Proxy all /api/* and /health/* to the Rust sensing server
     if (urlPath.startsWith('/api/') || urlPath.startsWith('/health')) {

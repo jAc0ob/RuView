@@ -100,6 +100,79 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #000; font
     font-size: 13px; cursor: pointer; margin-bottom: 8px;
 }
 
+/* AI chat button */
+#ai-btn {
+    position: fixed; bottom: max(env(safe-area-inset-bottom), 20px); left: 50%;
+    transform: translateX(-50%);
+    width: 44px; height: 44px; border-radius: 22px;
+    background: rgba(0,0,0,0.65); border: 1px solid var(--border);
+    z-index: 10; display: flex; align-items: center; justify-content: center;
+    cursor: pointer; backdrop-filter: blur(6px);
+}
+#ai-btn svg { width: 20px; height: 20px; fill: var(--g); }
+#ai-btn.thinking { border-color: var(--g); animation: blink .8s infinite; }
+
+/* AI chat panel */
+#ai-panel {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: rgba(0,0,0,0.94); border-top: 1px solid var(--border);
+    border-radius: 18px 18px 0 0; z-index: 30;
+    display: flex; flex-direction: column;
+    max-height: 70vh;
+    transform: translateY(100%); transition: transform .3s ease;
+}
+#ai-panel.open { transform: translateY(0); }
+#ai-header {
+    display: flex; align-items: center; padding: 14px 16px 10px;
+    border-bottom: 1px solid rgba(0,245,160,0.1); flex-shrink: 0;
+}
+#ai-header-title { font-size: 12px; color: var(--g); letter-spacing: 2px; flex: 1; }
+#ai-model-select {
+    background: rgba(0,245,160,0.07); border: 1px solid var(--border);
+    border-radius: 6px; color: var(--g); font-size: 10px; padding: 4px 8px;
+    font-family: monospace; cursor: pointer;
+}
+#ai-close {
+    background: none; border: none; color: rgba(255,255,255,0.4);
+    font-size: 20px; cursor: pointer; padding: 0 0 0 12px; line-height: 1;
+}
+#ai-messages {
+    flex: 1; overflow-y: auto; padding: 12px 14px; display: flex;
+    flex-direction: column; gap: 10px; min-height: 80px;
+}
+.ai-msg { display: flex; gap: 8px; align-items: flex-start; }
+.ai-msg.user { flex-direction: row-reverse; }
+.ai-bubble {
+    max-width: 82%; padding: 9px 12px; border-radius: 12px;
+    font-size: 13px; line-height: 1.5; white-space: pre-wrap;
+}
+.ai-msg.user .ai-bubble { background: rgba(0,245,160,0.14); color: var(--g); border-radius: 12px 12px 0 12px; }
+.ai-msg.assistant .ai-bubble { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.85); border-radius: 12px 12px 12px 0; }
+.ai-msg.assistant .ai-bubble.streaming::after { content: '▋'; animation: blink .6s infinite; }
+.ai-chips {
+    display: flex; gap: 6px; padding: 0 14px 8px; flex-wrap: wrap; flex-shrink: 0;
+}
+.ai-chip {
+    background: rgba(0,245,160,0.07); border: 1px solid var(--border);
+    border-radius: 14px; padding: 5px 10px; font-size: 11px; color: rgba(0,245,160,0.7);
+    cursor: pointer; white-space: nowrap;
+}
+#ai-input-row {
+    display: flex; gap: 8px; padding: 10px 14px max(env(safe-area-inset-bottom),14px);
+    border-top: 1px solid rgba(0,245,160,0.08); flex-shrink: 0;
+}
+#ai-input {
+    flex: 1; background: rgba(0,245,160,0.07); border: 1px solid var(--border);
+    border-radius: 20px; padding: 10px 14px; color: var(--g); font-size: 13px;
+    font-family: monospace; resize: none; max-height: 80px; overflow-y: auto;
+}
+#ai-send {
+    width: 38px; height: 38px; border-radius: 19px; background: var(--g);
+    border: none; color: #000; font-size: 16px; cursor: pointer; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+}
+#ai-send:disabled { background: rgba(0,245,160,0.2); cursor: default; }
+
 /* Camera permission splash */
 #splash {
     position: fixed; inset: 0; background: #000; z-index: 100;
@@ -127,6 +200,38 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #000; font
 </style>
 </head>
 <body>
+
+<!-- AI chat button -->
+<div id="ai-btn">
+    <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z" opacity=".3"/><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-6h2v2h-2zm0-8h2v6h-2z"/></svg>
+</div>
+
+<!-- AI chat panel -->
+<div id="ai-panel">
+    <div id="ai-header">
+        <span id="ai-header-title">RUVIEW AI</span>
+        <select id="ai-model-select" title="AI model" aria-label="AI model">
+            <option value="llama3.2">llama3.2</option>
+            <option value="llama3.1">llama3.1</option>
+            <option value="mistral">mistral</option>
+            <option value="phi3">phi3</option>
+            <option value="gemma3">gemma3</option>
+        </select>
+        <button id="ai-close" type="button">×</button>
+    </div>
+    <div id="ai-messages"></div>
+    <div class="ai-chips">
+        <div class="ai-chip">Is anyone in the room?</div>
+        <div class="ai-chip">Vital signs?</div>
+        <div class="ai-chip">Any movement?</div>
+        <div class="ai-chip">Node status?</div>
+        <div class="ai-chip">Fall detected?</div>
+    </div>
+    <div id="ai-input-row">
+        <textarea id="ai-input" placeholder="Ask about the room…" rows="1"></textarea>
+        <button id="ai-send" type="button">↑</button>
+    </div>
+</div>
 
 <div id="splash">
     <div class="splash-title">RUVIEW X-RAY</div>
@@ -674,6 +779,133 @@ document.getElementById('apply-wifi-btn').addEventListener('click', async () => 
     } else {
         setStatus(fail.join(' | '), false);
     }
+});
+
+// ─── AI Chat ─────────────────────────────────────────────────────────────────
+const aiPanel    = document.getElementById('ai-panel');
+const aiMessages = document.getElementById('ai-messages');
+const aiInput    = document.getElementById('ai-input');
+const aiSend     = document.getElementById('ai-send');
+const aiBtn      = document.getElementById('ai-btn');
+const aiModelSel = document.getElementById('ai-model-select');
+let aiHistory    = [];  // {role, content}[]
+let aiStreaming   = false;
+
+function sensingContext() {
+    if (!lastData) return 'No sensing data yet.';
+    const d = lastData;
+    const pres = d.classification?.presence;
+    const ml   = d.classification?.motion_level ?? 'unknown';
+    const nP   = d.estimated_persons ?? (pres ? 1 : 0);
+    const hr   = smoothHR ? `${Math.round(smoothHR)} bpm` : 'unavailable';
+    const br   = smoothBR ? `${Math.round(smoothBR)} rpm` : 'unavailable';
+    const nodes = (d.nodes ?? []).map(n => `Node ${n.node_id} RSSI=${n.rssi_dbm ?? '?'} dBm`).join(', ') || 'none';
+    return `Nodes: ${nodes}\nPresence: ${pres ? 'YES' : 'NO'} (${nP} person${nP !== 1 ? 's' : ''})\nMotion: ${ml}\nHeart rate: ${hr}\nBreathing: ${br}\nTimestamp: ${new Date().toLocaleTimeString()}`;
+}
+
+function addMessage(role, text, streaming = false) {
+    const wrap = document.createElement('div');
+    wrap.className = `ai-msg ${role}`;
+    const bubble = document.createElement('div');
+    bubble.className = 'ai-bubble' + (streaming ? ' streaming' : '');
+    bubble.textContent = text;
+    wrap.appendChild(bubble);
+    aiMessages.appendChild(wrap);
+    aiMessages.scrollTop = aiMessages.scrollHeight;
+    return bubble;
+}
+
+async function sendToAI(userText) {
+    if (aiStreaming || !userText.trim()) return;
+    aiStreaming = true;
+    aiSend.disabled = true;
+    aiBtn.classList.add('thinking');
+
+    aiHistory.push({ role: 'user', content: userText });
+    addMessage('user', userText);
+    aiInput.value = '';
+    aiInput.style.height = '';
+
+    const systemPrompt = `You are RuView AI, an assistant for a real-time WiFi-based room sensing system using ESP32 CSI nodes.
+
+Current room state:
+${sensingContext()}
+
+Answer questions about what you sense. Be concise and direct. If uncertain, say so.`;
+
+    const body = JSON.stringify({
+        model: aiModelSel.value,
+        stream: true,
+        messages: [
+            { role: 'system', content: systemPrompt },
+            ...aiHistory,
+        ],
+    });
+
+    const bubble = addMessage('assistant', '', true);
+
+    try {
+        const resp = await fetch('/ai/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body,
+        });
+
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({ error: resp.statusText }));
+            bubble.textContent = `⚠ ${err.error || resp.statusText}`;
+            bubble.classList.remove('streaming');
+            if (err.hint) bubble.textContent += `\n\n${err.hint}`;
+        } else {
+            const reader = resp.body.getReader();
+            const decoder = new TextDecoder();
+            let fullText = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                // Ollama streams one JSON object per line
+                decoder.decode(value).split('\n').forEach(line => {
+                    if (!line.trim()) return;
+                    try {
+                        const chunk = JSON.parse(line);
+                        const token = chunk.message?.content ?? '';
+                        fullText += token;
+                        bubble.textContent = fullText;
+                        aiMessages.scrollTop = aiMessages.scrollHeight;
+                    } catch {}
+                });
+            }
+            bubble.classList.remove('streaming');
+            aiHistory.push({ role: 'assistant', content: fullText });
+        }
+    } catch (e) {
+        bubble.textContent = `⚠ Ollama offline — run: ollama serve`;
+        bubble.classList.remove('streaming');
+    }
+
+    aiStreaming = false;
+    aiSend.disabled = false;
+    aiBtn.classList.remove('thinking');
+}
+
+aiBtn.addEventListener('click', () => aiPanel.classList.toggle('open'));
+document.getElementById('ai-close').addEventListener('click', () => aiPanel.classList.remove('open'));
+
+aiSend.addEventListener('click', () => sendToAI(aiInput.value));
+aiInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendToAI(aiInput.value); }
+});
+aiInput.addEventListener('input', () => {
+    aiInput.style.height = '';
+    aiInput.style.height = Math.min(aiInput.scrollHeight, 80) + 'px';
+});
+
+document.querySelectorAll('.ai-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+        aiPanel.classList.add('open');
+        sendToAI(chip.textContent);
+    });
 });
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
