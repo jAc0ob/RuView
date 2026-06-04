@@ -215,7 +215,8 @@ const CFG = (() => {
     const saved = JSON.parse(localStorage.getItem('ruview-xray-cfg') || '{}');
     return {
         nodePos: saved.nodePos || { 0: [0, 0], 1: [3, 0] },
-        wsUrl: saved.wsUrl || null,
+        nodeIp:  saved.nodeIp  || { 0: '192.168.1.109', 1: '192.168.1.126' },
+        wsUrl:   saved.wsUrl   || null,
     };
 })();
 function saveCfg() { localStorage.setItem('ruview-xray-cfg', JSON.stringify(CFG)); }
