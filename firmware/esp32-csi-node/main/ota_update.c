@@ -1,11 +1,11 @@
 /**
  * @file ota_update.c
- * @brief HTTP OTA firmware update for ESP32-S3 CSI Node.
+ * @brief HTTP OTA firmware update for ESP32 CSI Node.
  *
- * Uses ESP-IDF's native OTA API with rollback support.
  * The HTTP server runs on port 8032 and accepts:
- *   POST /ota — firmware binary payload (application/octet-stream)
- *   GET /ota/status — current firmware version and partition info
+ *   POST /ota     — firmware binary (application/octet-stream)
+ *   GET  /ota/status — firmware version info
+ *   POST /config  — update NVS WiFi/target config and reboot
  */
 
 #include "ota_update.h"
@@ -17,6 +17,9 @@
 #include "esp_app_desc.h"
 #include "nvs_flash.h"
 #include "nvs.h"
+#include "cJSON.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 static const char *TAG = "ota_update";
 
@@ -209,6 +212,105 @@ static esp_err_t ota_upload_handler(httpd_req_t *req)
     return ESP_OK;  /* Never reached. */
 }
 
+/* ─── POST /config — WiFi / target config update ────────────────────────── */
+
+#define CONFIG_BODY_MAX 512
+
+static void restart_task(void *arg)
+{
+    vTaskDelay(pdMS_TO_TICKS(600));
+    esp_restart();
+}
+
+/**
+ * POST /config — accepts a JSON body with any of:
+ *   {"ssid":"...", "password":"...", "target_ip":"...",
+ *    "target_port":5005, "node_id":1}
+ * Writes to NVS namespace "csi_cfg" and reboots the node.
+ * Auth: required if an OTA PSK is provisioned; open on LAN otherwise.
+ */
+static esp_err_t config_update_handler(httpd_req_t *req)
+{
+    if (s_ota_psk[0] != '\0' && !ota_check_auth(req)) {
+        httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN,
+                            "Authorization: Bearer <psk> required");
+        return ESP_FAIL;
+    }
+
+    if (req->content_len <= 0 || req->content_len > CONFIG_BODY_MAX) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body missing or too large");
+        return ESP_FAIL;
+    }
+
+    char body[CONFIG_BODY_MAX + 1] = {0};
+    int received = httpd_req_recv(req, body, req->content_len);
+    if (received <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Failed to read body");
+        return ESP_FAIL;
+    }
+    body[received] = '\0';
+
+    cJSON *root = cJSON_Parse(body);
+    if (!root) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+
+    nvs_handle_t nvs;
+    if (nvs_open("csi_cfg", NVS_READWRITE, &nvs) != ESP_OK) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "NVS open failed");
+        return ESP_FAIL;
+    }
+
+    int applied = 0;
+    cJSON *item;
+
+    if ((item = cJSON_GetObjectItemCaseSensitive(root, "ssid")) && cJSON_IsString(item)) {
+        nvs_set_str(nvs, "ssid", item->valuestring);
+        ESP_LOGI(TAG, "/config: ssid → %s", item->valuestring);
+        applied++;
+    }
+    if ((item = cJSON_GetObjectItemCaseSensitive(root, "password")) && cJSON_IsString(item)) {
+        nvs_set_str(nvs, "password", item->valuestring);
+        ESP_LOGI(TAG, "/config: password → ***");
+        applied++;
+    }
+    if ((item = cJSON_GetObjectItemCaseSensitive(root, "target_ip")) && cJSON_IsString(item)) {
+        nvs_set_str(nvs, "target_ip", item->valuestring);
+        ESP_LOGI(TAG, "/config: target_ip → %s", item->valuestring);
+        applied++;
+    }
+    if ((item = cJSON_GetObjectItemCaseSensitive(root, "target_port")) && cJSON_IsNumber(item)) {
+        nvs_set_u16(nvs, "target_port", (uint16_t)item->valueint);
+        ESP_LOGI(TAG, "/config: target_port → %d", item->valueint);
+        applied++;
+    }
+    if ((item = cJSON_GetObjectItemCaseSensitive(root, "node_id")) && cJSON_IsNumber(item)) {
+        nvs_set_u8(nvs, "node_id", (uint8_t)item->valueint);
+        ESP_LOGI(TAG, "/config: node_id → %d", item->valueint);
+        applied++;
+    }
+
+    nvs_commit(nvs);
+    nvs_close(nvs);
+    cJSON_Delete(root);
+
+    if (applied == 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                            "No recognised keys (ssid/password/target_ip/target_port/node_id)");
+        return ESP_FAIL;
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_sendstr(req, "{\"status\":\"ok\",\"rebooting\":true}");
+
+    xTaskCreate(restart_task, "cfg_restart", 1024, NULL, 5, NULL);
+    return ESP_OK;
+}
+
 /** Internal: start the HTTP server and register OTA endpoints. */
 static esp_err_t ota_start_server(httpd_handle_t *out_handle)
 {
@@ -243,9 +345,18 @@ static esp_err_t ota_start_server(httpd_handle_t *out_handle)
     };
     httpd_register_uri_handler(server, &upload_uri);
 
+    httpd_uri_t config_uri = {
+        .uri      = "/config",
+        .method   = HTTP_POST,
+        .handler  = config_update_handler,
+        .user_ctx = NULL,
+    };
+    httpd_register_uri_handler(server, &config_uri);
+
     ESP_LOGI(TAG, "OTA HTTP server started on port %d", OTA_PORT);
     ESP_LOGI(TAG, "  GET  /ota/status — firmware version info");
     ESP_LOGI(TAG, "  POST /ota        — upload new firmware binary");
+    ESP_LOGI(TAG, "  POST /config     — update WiFi/target config (JSON) and reboot");
 
     if (out_handle) *out_handle = server;
     return ESP_OK;

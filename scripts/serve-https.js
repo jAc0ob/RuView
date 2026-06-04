@@ -139,6 +139,35 @@ function proxyApi(req, res) {
     req.pipe(upstream);
 }
 
+// Forward requests to an ESP32 node's OTA HTTP server (port 8032).
+function proxyNode(req, res, nodeIp, nodePath) {
+    // Validate IP is in the private range to prevent SSRF to public internet.
+    const parts = nodeIp.split('.').map(Number);
+    const isPrivate = (parts[0] === 10) ||
+        (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+        (parts[0] === 192 && parts[1] === 168);
+    if (!isPrivate) { res.writeHead(403); res.end('Only private IPs allowed'); return; }
+
+    const opts = {
+        hostname: nodeIp, port: 8032, path: nodePath + (req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : ''),
+        method: req.method,
+        headers: { ...req.headers, host: `${nodeIp}:8032` },
+        timeout: 5000,
+    };
+    const upstream = http.request(opts, upRes => {
+        res.writeHead(upRes.statusCode, {
+            ...upRes.headers,
+            'Access-Control-Allow-Origin': '*',
+        });
+        upRes.pipe(res);
+    });
+    upstream.on('error', () => {
+        res.writeHead(502);
+        res.end(JSON.stringify({ error: 'node unreachable', node: nodeIp, port: 8032 }));
+    });
+    req.pipe(upstream);
+}
+
 function onRequest(req, res) {
     let urlPath = decodeURIComponent(req.url.split('?')[0]);
     urlPath = path.posix.normalize(urlPath).replace(/^(\.\.\/)+/, '');
@@ -146,6 +175,15 @@ function onRequest(req, res) {
     // Proxy all /api/* and /health/* to the Rust sensing server
     if (urlPath.startsWith('/api/') || urlPath.startsWith('/health')) {
         return proxyApi(req, res);
+    }
+
+    // Proxy /node/<ip>/<path> → http://<ip>:8032/<path>  (ESP32 OTA/config server)
+    // Avoids CORS: requests from the iPhone HTTPS page go through this server.
+    const nodeMatch = urlPath.match(/^\/node\/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(\/.*)?$/);
+    if (nodeMatch) {
+        const nodeIp   = nodeMatch[1];
+        const nodePath = nodeMatch[2] || '/';
+        return proxyNode(req, res, nodeIp, nodePath);
     }
 
     // Root → xray dashboard
