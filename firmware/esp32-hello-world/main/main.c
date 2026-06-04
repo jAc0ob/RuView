@@ -29,7 +29,9 @@
 #include "nvs_flash.h"
 #include "soc/soc_caps.h"
 #include "driver/gpio.h"
+#if SOC_TEMP_SENSOR_SUPPORTED
 #include "driver/temperature_sensor.h"
+#endif
 #include "sdkconfig.h"
 
 /*
@@ -47,6 +49,13 @@
 #define PROBE_RMT_CHAN_NUM   4
 #define PROBE_MCPWM_GROUPS   1
 #define PROBE_PCNT_UNITS     4
+#elif CONFIG_IDF_TARGET_ESP32
+/* ESP32 DevKitV1 / WROOM / WROVER */
+#define PROBE_I2S_CTRL_NUM   2
+#define PROBE_RMT_CHAN_NUM   8
+#define PROBE_MCPWM_GROUPS   2
+#define PROBE_PCNT_UNITS     8
+#define PROBE_TOUCH_CHAN_NUM 10
 #else
 #error "hello-world: add PROBE_* peripheral counts for this IDF target in main.c"
 #endif
@@ -303,11 +312,17 @@ static void probe_peripherals(void)
     printf("    - ADC1:       %d channels (12-bit SAR)\n", SOC_ADC_CHANNEL_NUM(0));
     printf("    - ADC2:       %d channels (shared with WiFi)\n", SOC_ADC_CHANNEL_NUM(1));
 #endif
+#if CONFIG_IDF_TARGET_ESP32
+    printf("  DAC:            2 channels (8-bit, GPIO25/GPIO26)\n");
+#else
     printf("  DAC:            Not available on this chip\n");
+#endif
 #if CONFIG_IDF_TARGET_ESP32S3
     printf("  Touch Sensors:  %d channels (capacitive)\n", PROBE_TOUCH_CHAN_NUM);
 #elif CONFIG_IDF_TARGET_ESP32C6
     printf("  Touch Sensors:  Not available (no capacitive touch on ESP32-C6)\n");
+#elif CONFIG_IDF_TARGET_ESP32
+    printf("  Touch Sensors:  %d channels (T0-T9, capacitive)\n", PROBE_TOUCH_CHAN_NUM);
 #endif
     printf("  SPI:            %d controllers\n", SOC_SPI_PERIPH_NUM);
 #if CONFIG_IDF_TARGET_ESP32S3
@@ -322,6 +337,9 @@ static void probe_peripherals(void)
 #elif CONFIG_IDF_TARGET_ESP32C6
     printf("  USB:            No native USB-OTG (use SPI/USB bridge or off-chip PHY)\n");
     printf("  USB-Serial:     Built-in USB Serial/JTAG (this console)\n");
+#elif CONFIG_IDF_TARGET_ESP32
+    printf("  USB:            No native USB (DevKitV1 uses CP2102/CH340 bridge)\n");
+    printf("  USB-Serial:     Via UART0 through on-board USB-to-UART bridge\n");
 #endif
 #if CONFIG_IDF_TARGET_ESP32S3
     printf("  TWAI (CAN):     1 controller (CAN 2.0B compatible)\n");
@@ -393,6 +411,7 @@ static void probe_temperature(void)
 {
     print_separator("TEMPERATURE SENSOR");
 
+#if SOC_TEMP_SENSOR_SUPPORTED
     temperature_sensor_handle_t tsens = NULL;
     temperature_sensor_config_t tsens_cfg = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 80);
 
@@ -407,6 +426,9 @@ static void probe_temperature(void)
     } else {
         printf("  Chip Temp:      Sensor not available (%s)\n", esp_err_to_name(ret));
     }
+#else
+    printf("  Chip Temp:      No dedicated temp sensor on this chip\n");
+#endif
 }
 
 static void probe_freertos(void)

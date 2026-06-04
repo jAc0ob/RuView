@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>RuView X-Ray</title>
+<style>
+:root {
+    --g: #00f5a0;
+    --g2: rgba(0,245,160,0.15);
+    --r: #ff4757;
+    --y: #ffd32a;
+    --glass: rgba(0,0,0,0.55);
+    --border: rgba(0,245,160,0.25);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: 'Courier New', monospace; color: var(--g); }
+
+#cam { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 1; }
+#overlay { position: fixed; inset: 0; z-index: 2; pointer-events: none; }
+
+/* Status bar */
+#bar {
+    position: fixed; top: 0; left: 0; right: 0;
+    padding: max(env(safe-area-inset-top), 14px) 16px 10px;
+    background: linear-gradient(to bottom, rgba(0,0,0,0.72), transparent);
+    z-index: 10; display: flex; align-items: center; gap: 10px;
+}
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--r); flex-shrink: 0; }
+.dot.live { background: var(--g); }
+.dot.blink { background: var(--y); animation: blink .9s infinite; }
+#bar-text { font-size: 11px; color: rgba(255,255,255,0.75); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#bar-nodes { font-size: 11px; color: var(--g); }
+
+/* Node map (bottom-right) */
+#mapbox {
+    position: fixed; bottom: max(env(safe-area-inset-bottom), 20px); right: 16px;
+    width: 130px; background: var(--glass); border: 1px solid var(--border);
+    border-radius: 10px; backdrop-filter: blur(6px); z-index: 10; overflow: hidden;
+}
+#mapbox canvas { display: block; }
+#map-label { text-align: center; font-size: 8px; color: rgba(0,245,160,0.45); padding: 3px 0 5px; letter-spacing: 1px; }
+
+/* Vitals panel (bottom-left) */
+#vitals {
+    position: fixed; bottom: max(env(safe-area-inset-bottom), 20px); left: 16px;
+    background: var(--glass); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 14px; z-index: 10; backdrop-filter: blur(6px); min-width: 148px;
+}
+.vrow { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 7px; }
+.vrow:last-child { margin-bottom: 0; }
+.vlabel { font-size: 9px; color: rgba(255,255,255,0.4); letter-spacing: 1px; }
+.vval { font-size: 15px; font-weight: bold; color: var(--g); }
+.vval.off { color: rgba(255,255,255,0.2); font-size: 13px; }
+
+/* Settings button */
+#settings-btn {
+    position: fixed; top: max(env(safe-area-inset-top), 14px); right: 16px;
+    width: 34px; height: 34px; border-radius: 17px; background: var(--glass);
+    border: 1px solid var(--border); z-index: 11; display: flex; align-items: center; justify-content: center;
+    cursor: pointer; backdrop-filter: blur(6px);
+}
+#settings-btn svg { width: 16px; height: 16px; fill: var(--g); }
+
+/* Settings drawer */
+#settings {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: rgba(0,0,0,0.92); border-top: 1px solid var(--border);
+    border-radius: 16px 16px 0 0; z-index: 20; padding: 20px 20px max(env(safe-area-inset-bottom), 20px);
+    transform: translateY(100%); transition: transform .3s ease;
+}
+#settings.open { transform: translateY(0); }
+#settings h2 { font-size: 13px; color: var(--g); margin-bottom: 16px; letter-spacing: 2px; }
+.setting-row { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.setting-row label { font-size: 11px; color: rgba(255,255,255,0.5); width: 90px; }
+.setting-row input {
+    flex: 1; background: rgba(0,245,160,0.07); border: 1px solid var(--border);
+    border-radius: 6px; padding: 7px 10px; color: var(--g); font-family: monospace; font-size: 12px;
+}
+#close-settings {
+    width: 100%; padding: 12px; background: var(--g2); border: 1px solid var(--border);
+    border-radius: 8px; color: var(--g); font-size: 13px; cursor: pointer; margin-top: 8px;
+}
+
+/* Camera permission splash */
+#splash {
+    position: fixed; inset: 0; background: #000; z-index: 100;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 22px; padding: 40px 32px;
+}
+#splash.gone { display: none; }
+.splash-title { font-size: 26px; font-weight: bold; color: var(--g); letter-spacing: 2px; }
+.splash-sub { font-size: 13px; color: rgba(255,255,255,0.55); text-align: center; line-height: 1.7; }
+#go-btn {
+    background: var(--g); color: #000; border: none; border-radius: 14px;
+    padding: 16px 44px; font-size: 16px; font-weight: bold; cursor: pointer; letter-spacing: 1px;
+}
+.splash-note { font-size: 10px; color: rgba(255,255,255,0.3); text-align: center; line-height: 1.6; }
+
+/* Scan-line animation over camera */
+@keyframes scan { 0% { top: -2px; } 100% { top: 100%; } }
+#scanline {
+    position: fixed; left: 0; right: 0; height: 2px; z-index: 3; pointer-events: none;
+    background: linear-gradient(to right, transparent, rgba(0,245,160,0.5), transparent);
+    animation: scan 3s linear infinite;
+}
+
+@keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.2; } }
+</style>
+</head>
+<body>
+
+<div id="splash">
+    <div class="splash-title">RUVIEW X-RAY</div>
+    <div class="splash-sub">
+        See WiFi-detected presence, vital signs, and node positions overlaid on live camera.
+    </div>
+    <button id="go-btn">START X-RAY</button>
+    <div class="splash-note">
+        Requires camera, location, and local network access.<br>
+        All processing stays on your home network.
+    </div>
+</div>
+
+<video id="cam" autoplay playsinline muted></video>
+<canvas id="overlay"></canvas>
+<div id="scanline"></div>
+
+<div id="bar">
+    <div class="dot" id="dot"></div>
+    <span id="bar-text">Connecting…</span>
+    <span id="bar-nodes" id="bar-nodes">—</span>
+</div>
+
+<div id="settings-btn" id="settings-btn">
+    <svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 100-6 3 3 0 000 6z"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+</div>
+
+<div id="mapbox">
+    <canvas id="map-canvas" width="130" height="130"></canvas>
+    <div id="map-label">FLOOR MAP</div>
+</div>
+
+<div id="vitals">
+    <div class="vrow"><span class="vlabel">PERSONS</span><span class="vval off" id="v-p">—</span></div>
+    <div class="vrow"><span class="vlabel">HEART</span><span class="vval off" id="v-hr">—</span></div>
+    <div class="vrow"><span class="vlabel">BREATH</span><span class="vval off" id="v-br">—</span></div>
+    <div class="vrow"><span class="vlabel">MOTION</span><span class="vval off" id="v-m">—</span></div>
+</div>
+
+<div id="settings">
+    <h2>NODE POSITIONS</h2>
+    <div class="setting-row">
+        <label>Node 1 — X,Y (m)</label>
+        <input id="n1-pos" type="text" placeholder="0, 0" inputmode="decimal">
+    </div>
+    <div class="setting-row">
+        <label>Node 2 — X,Y (m)</label>
+        <input id="n2-pos" type="text" placeholder="3, 0" inputmode="decimal">
+    </div>
+    <div class="setting-row">
+        <label>Sensing Server</label>
+        <input id="ws-url-input" type="text" placeholder="auto" inputmode="url">
+    </div>
+    <button id="close-settings">Save & Close</button>
+</div>
+
+<script>
+// ─── Config & state ───────────────────────────────────────────────────────────
+const CFG = (() => {
+    const saved = JSON.parse(localStorage.getItem('ruview-xray-cfg') || '{}');
+    return {
+        nodePos: saved.nodePos || { 0: [0, 0], 1: [3, 0] },
+        wsUrl: saved.wsUrl || null,
+    };
+})();
+function saveCfg() { localStorage.setItem('ruview-xray-cfg', JSON.stringify(CFG)); }
+
+// Auto-detect WS URL based on current page URL
+function autoWsUrl() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const h = location.hostname;
+    const portMap = { '3000': '3001', '8080': '8765', '8443': '8443' };
+    const wp = portMap[location.port] || location.port || '8765';
+    return `${proto}//${h}:${wp}/ws/sensing`;
+}
+
+const WS_URL = CFG.wsUrl || autoWsUrl();
+
+// COCO skeleton pairs (indices into the 17-keypoint array)
+const SKEL = [
+    [0,1],[0,2],[1,3],[2,4],          // head
+    [5,6],[5,7],[7,9],[6,8],[8,10],   // arms
+    [5,11],[6,12],[11,12],            // torso
+    [11,13],[13,15],[12,14],[14,16]   // legs
+];
+
+// Runtime state
+let wsRetries = 0, ws = null;
+let lastData = null;
+let heading = 0;
+let phoneGps = null;
+let presRing = new Array(12).fill(false);
+let smoothHR = null, smoothBR = null;
+let animRunning = false;
+
+// ─── DOM ──────────────────────────────────────────────────────────────────────
+const cam       = document.getElementById('cam');
+const overlay   = document.getElementById('overlay');
+const oc        = overlay.getContext('2d');
+const mapCv     = document.getElementById('map-canvas');
+const mc        = mapCv.getContext('2d');
+const dot       = document.getElementById('dot');
+const barText   = document.getElementById('bar-text');
+const barNodes  = document.getElementById('bar-nodes');
+const vP  = document.getElementById('v-p');
+const vHR = document.getElementById('v-hr');
+const vBR = document.getElementById('v-br');
+const vM  = document.getElementById('v-m');
+const settingsPanel = document.getElementById('settings');
+
+// ─── Canvas sizing (Retina-aware) ────────────────────────────────────────────
+const DPR = window.devicePixelRatio || 1;
+function resize() {
+    overlay.style.width  = window.innerWidth  + 'px';
+    overlay.style.height = window.innerHeight + 'px';
+    overlay.width  = window.innerWidth  * DPR;
+    overlay.height = window.innerHeight * DPR;
+    oc.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+window.addEventListener('resize', resize);
+
+// ─── Camera ──────────────────────────────────────────────────────────────────
+async function startCamera() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+            audio: false,
+        });
+        cam.srcObject = stream;
+        await cam.play();
+    } catch (e) {
+        barText.textContent = 'Camera blocked — CSI sensing still active';
+    }
+}
+
+// ─── GPS (started after user gesture — iOS requires this) ────────────────────
+function startGps() {
+    if ('geolocation' in navigator) {
+        navigator.geolocation.watchPosition(
+            p => { phoneGps = { lat: p.coords.latitude, lng: p.coords.longitude }; },
+            () => {},
+            { enableHighAccuracy: true, maximumAge: 2000 }
+        );
+    }
+}
+
+// ─── Compass heading ─────────────────────────────────────────────────────────
+function onOrient(e) {
+    heading = (e.webkitCompassHeading != null)
+        ? e.webkitCompassHeading
+        : (360 - (e.alpha || 0)) % 360;
+}
+if (typeof DeviceOrientationEvent !== 'undefined' &&
+    typeof DeviceOrientationEvent.requestPermission === 'function') {
+    document.getElementById('go-btn').addEventListener('click', () => {
+        DeviceOrientationEvent.requestPermission().catch(() => {});
+        window.addEventListener('deviceorientationabsolute', onOrient, true);
+        window.addEventListener('deviceorientation', onOrient, true);
+    }, { once: false });
+} else {
+    window.addEventListener('deviceorientationabsolute', onOrient, true);
+    window.addEventListener('deviceorientation', onOrient, true);
+}
+
+// ─── WebSocket ────────────────────────────────────────────────────────────────
+function connectWs() {
+    dot.className = 'dot blink';
+    barText.textContent = `Connecting to ${WS_URL}…`;
+
+    ws = new WebSocket(WS_URL);
+    ws.onopen  = () => { wsRetries = 0; dot.className = 'dot live'; barText.textContent = 'Live CSI sensing active'; };
+    ws.onmessage = e => { try { lastData = JSON.parse(e.data); } catch {} };
+    ws.onclose = () => {
+        dot.className = 'dot blink';
+        barText.textContent = 'Reconnecting…';
+        const delay = Math.min(400 * Math.pow(1.6, wsRetries++), 20000);
+        setTimeout(connectWs, delay);
+    };
+    ws.onerror = () => ws.close();
+}
+
+// ─── Main render loop ─────────────────────────────────────────────────────────
+let lastTs = 0;
+function render(ts) {
+    requestAnimationFrame(render);
+    const W = window.innerWidth, H = window.innerHeight;
+    oc.clearRect(0, 0, W, H);
+
+    const d = lastData;
+    if (!d) return;
+
+    // Presence ring
+    const pres = d.classification?.presence ?? false;
+    presRing.shift(); presRing.push(pres);
+    const presConf = presRing.filter(Boolean).length >= 5;
+
+    // Smooth vitals
+    const vs = d.vital_signs;
+    if (vs && presConf) {
+        if (vs.heart_rate_bpm    > 0 && vs.heart_rate_confidence    > 0.35) smoothHR = lerp(smoothHR ?? vs.heart_rate_bpm,    vs.heart_rate_bpm,    0.12);
+        if (vs.breathing_rate_rpm > 0 && vs.breathing_confidence > 0.35) smoothBR = lerp(smoothBR ?? vs.breathing_rate_rpm, vs.breathing_rate_rpm, 0.12);
+    } else if (!presConf) { smoothHR = null; smoothBR = null; }
+
+    // Node count
+    if (d.nodes?.length) barNodes.textContent = `${d.nodes.length} node${d.nodes.length>1?'s':''}`;
+
+    // 1. Signal field background haze
+    if (d.signal_field?.values) drawField(d.signal_field, W, H);
+
+    // 2. Person overlay
+    if (presConf) {
+        if (d.persons?.length > 0) {
+            d.persons.forEach((p, i) => drawPerson(p, W, H, i));
+        } else if (d.pose_keypoints?.length >= 2) {
+            drawKps(d.pose_keypoints, W, H, 0);
+        } else {
+            drawPresenceGlow(W, H, d.classification?.confidence ?? 0.7, ts);
+        }
+    }
+
+    // 3. Floor map
+    drawMap(d, presConf);
+
+    // 4. HUD vitals
+    updateVitals(d, presConf);
+
+    lastTs = ts;
+}
+
+function lerp(a, b, t) { return a + (b - a) * t; }
+
+// ─── Signal field heatmap ─────────────────────────────────────────────────────
+function drawField(field, W, H) {
+    const [gx,,gz] = field.grid_size;
+    const vals = field.values;
+    const cw = W / gx, ch = H / gz;
+    oc.save();
+    for (let z = 0; z < gz; z++) {
+        for (let x = 0; x < gx; x++) {
+            const v = vals[z * gx + x] || 0;
+            if (v < 0.08) continue;
+            oc.fillStyle = `rgba(0,80,255,${(v * 0.14).toFixed(3)})`;
+            oc.fillRect(x * cw, z * ch, cw + 1, ch + 1);
+        }
+    }
+    oc.restore();
+}
+
+// ─── X-ray presence glow (no skeleton data yet) ───────────────────────────────
+function drawPresenceGlow(W, H, conf, ts) {
+    const cx = W * 0.5, cy = H * 0.42;
+    const r  = Math.min(W, H) * 0.16;
+    const pulse = 1 + 0.06 * Math.sin(ts * 0.0025);
+
+    oc.save();
+    // Outer rings
+    for (let i = 3; i >= 0; i--) {
+        const rr = r * pulse * (1 + i * 0.3);
+        const g = oc.createRadialGradient(cx, cy, 0, cx, cy, rr);
+        g.addColorStop(0, `rgba(0,245,160,${(conf * 0.28 / (i + 1)).toFixed(3)})`);
+        g.addColorStop(1, 'rgba(0,245,160,0)');
+        oc.beginPath(); oc.arc(cx, cy, rr, 0, Math.PI * 2);
+        oc.fillStyle = g; oc.fill();
+    }
+
+    // Stick figure
+    const b = 1 + 0.015 * Math.sin(ts * 0.0018); // subtle breathing
+    oc.translate(cx, cy - r * 0.55);
+    oc.scale(b, b);
+    oc.strokeStyle = `rgba(0,245,160,${(conf * 0.9).toFixed(2)})`;
+    oc.lineWidth = 2.5;
+    oc.shadowColor = '#00f5a0';
+    oc.shadowBlur = 18;
+
+    oc.beginPath(); oc.arc(0, -r * 0.88, r * 0.17, 0, Math.PI * 2); oc.stroke(); // head
+    oc.beginPath(); oc.moveTo(0, -r * 0.7); oc.lineTo(0, r * 0.18); oc.stroke();  // spine
+    oc.beginPath(); oc.moveTo(-r * 0.38, -r * 0.38); oc.lineTo(r * 0.38, -r * 0.38); oc.stroke(); // arms
+    oc.beginPath(); oc.moveTo(0, r * 0.18); oc.lineTo(-r * 0.23, r * 0.88); oc.stroke(); // leg L
+    oc.beginPath(); oc.moveTo(0, r * 0.18); oc.lineTo( r * 0.23, r * 0.88); oc.stroke(); // leg R
+    oc.restore();
+}
+
+// ─── 17-keypoint skeleton ─────────────────────────────────────────────────────
+function kpToScreen(kp, W, H) {
+    // kp: [x, y, z, conf] — room-normalised 0→1
+    // Map to screen with some margin so skeleton fills central portion
+    return {
+        sx: W * (0.18 + kp[0] * 0.64),
+        sy: H * (0.12 + (1 - kp[1]) * 0.68),
+        c:  kp[3] ?? 0.5,
+    };
+}
+function drawKps(kps, W, H, hue) {
+    const pts = kps.map(k => kpToScreen(k, W, H));
+    oc.save();
+    oc.shadowColor = '#00f5a0'; oc.shadowBlur = 10;
+    oc.strokeStyle = 'rgba(0,245,160,0.88)'; oc.lineWidth = 2.5;
+    SKEL.forEach(([a, b]) => {
+        if (a >= pts.length || b >= pts.length) return;
+        if (pts[a].c < 0.25 || pts[b].c < 0.25) return;
+        oc.beginPath(); oc.moveTo(pts[a].sx, pts[a].sy); oc.lineTo(pts[b].sx, pts[b].sy); oc.stroke();
+    });
+    oc.shadowBlur = 14;
+    pts.forEach(({ sx, sy, c }) => {
+        if (c < 0.25) return;
+        oc.beginPath(); oc.arc(sx, sy, 4, 0, Math.PI * 2);
+        oc.fillStyle = `rgba(0,245,160,${c.toFixed(2)})`;
+        oc.fill();
+    });
+    oc.restore();
+}
+function drawPerson(p, W, H, idx) {
+    const kps = p.keypoints?.map(k => [k.x, k.y, k.z ?? 0, k.confidence]);
+    if (kps?.length >= 2) drawKps(kps, W, H, idx);
+}
+
+// ─── Floor map ────────────────────────────────────────────────────────────────
+function drawMap(d, presConf) {
+    const MW = 130, MH = 130;
+    mc.clearRect(0, 0, MW, MH);
+    mc.fillStyle = 'rgba(0,0,0,0)'; mc.fillRect(0, 0, MW, MH);
+
+    const nodes = d.nodes ?? [];
+
+    // Build node world positions: prefer live data, fall back to CFG
+    const nPos = {};
+    nodes.forEach(n => {
+        const p = n.position;
+        if (p && (p[0] !== 0 || p[1] !== 0 || p[2] !== 0)) {
+            nPos[n.node_id] = [p[0], p[1]];
+        } else {
+            nPos[n.node_id] = CFG.nodePos[n.node_id] ?? [n.node_id * 3, 0];
+        }
+    });
+
+    // Add any nodes from CFG not yet in live data
+    Object.entries(CFG.nodePos).forEach(([id, xy]) => {
+        if (!(id in nPos)) nPos[id] = xy;
+    });
+
+    const allPts = Object.values(nPos);
+    if (allPts.length === 0) { mc.fillStyle = 'rgba(0,245,160,0.3)'; mc.font = '9px monospace'; mc.textAlign = 'center'; mc.fillText('no nodes', 65, 65); return; }
+
+    // Bounding box with padding
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    allPts.forEach(([x, y]) => { minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y); });
+    const pad = Math.max((maxX - minX) * 0.35, 1.5);
+    minX -= pad; maxX += pad; minY -= pad; maxY += pad;
+    const rX = maxX - minX, rY = maxY - minY;
+    const toS = (x, y) => ({ sx: 8 + ((x - minX) / rX) * (MW - 16), sy: 8 + ((y - minY) / rY) * (MH - 16) });
+
+    // Room border
+    mc.strokeStyle = 'rgba(0,245,160,0.18)'; mc.lineWidth = 1;
+    mc.strokeRect(4, 4, MW - 8, MH - 8);
+
+    // Signal field on map
+    if (d.signal_field?.values) {
+        const [gx,,gz] = d.signal_field.grid_size;
+        const vals = d.signal_field.values;
+        const cw = (MW - 8) / gx, ch = (MH - 8) / gz;
+        for (let z = 0; z < gz; z++) {
+            for (let x = 0; x < gx; x++) {
+                const v = vals[z * gx + x] || 0;
+                if (v < 0.12) continue;
+                mc.fillStyle = `rgba(0,80,255,${(v * 0.55).toFixed(2)})`;
+                mc.fillRect(4 + x * cw, 4 + z * ch, cw, ch);
+            }
+        }
+    }
+
+    // Detected person centroid
+    if (presConf) {
+        // Estimate position from signal field peak or centre
+        let px = MW / 2, py = MH / 2;
+        if (d.signal_field?.values) {
+            const [gx,,gz] = d.signal_field.grid_size;
+            let best = 0, bx = gx/2, bz = gz/2;
+            d.signal_field.values.forEach((v, i) => { if (v > best) { best = v; bx = i % gx; bz = Math.floor(i / gx); } });
+            const roomX = minX + (bx / gx) * rX;
+            const roomY = minY + (bz / gz) * rY;
+            const s = toS(roomX, roomY);
+            px = s.sx; py = s.sy;
+        }
+        // Pulsing circle
+        const beat = 0.6 + 0.4 * Math.abs(Math.sin(Date.now() * 0.002));
+        mc.beginPath(); mc.arc(px, py, 9 * beat, 0, Math.PI * 2);
+        mc.fillStyle = `rgba(255,211,42,${0.25 * beat})`; mc.fill();
+        mc.beginPath(); mc.arc(px, py, 5, 0, Math.PI * 2);
+        mc.fillStyle = '#ffd32a'; mc.fill();
+    }
+
+    // Node dots
+    Object.entries(nPos).forEach(([id, [x, y]]) => {
+        const { sx, sy } = toS(x, y);
+        const nodeData = nodes.find(n => String(n.node_id) === String(id));
+        const active = nodeData && nodeData.rssi_dbm != null;
+
+        if (active) {
+            const g = mc.createRadialGradient(sx, sy, 0, sx, sy, 16);
+            g.addColorStop(0, 'rgba(0,245,160,0.35)'); g.addColorStop(1, 'rgba(0,245,160,0)');
+            mc.beginPath(); mc.arc(sx, sy, 16, 0, Math.PI * 2); mc.fillStyle = g; mc.fill();
+        }
+        mc.beginPath(); mc.arc(sx, sy, active ? 5 : 3, 0, Math.PI * 2);
+        mc.fillStyle = active ? '#00f5a0' : 'rgba(0,245,160,0.35)'; mc.fill();
+        mc.fillStyle = 'rgba(0,245,160,0.65)'; mc.font = 'bold 8px monospace'; mc.textAlign = 'center';
+        mc.fillText(`N${id}`, sx, sy - 8);
+    });
+
+    // Phone compass arrow (indicates phone orientation in room)
+    const ax = MW / 2, ay = MH / 2;
+    const ar = heading * Math.PI / 180;
+    const al = 10;
+    mc.save(); mc.translate(ax, ay); mc.rotate(ar);
+    mc.beginPath(); mc.moveTo(0, -al); mc.lineTo(-4, al * 0.4); mc.lineTo(0, 0); mc.lineTo(4, al * 0.4); mc.closePath();
+    mc.fillStyle = 'rgba(255,71,87,0.8)'; mc.fill();
+    mc.restore();
+
+    // Compass "N" label
+    mc.fillStyle = 'rgba(255,71,87,0.5)'; mc.font = '7px monospace'; mc.textAlign = 'center';
+    mc.fillText('N', MW / 2, 13);
+}
+
+// ─── HUD vitals ───────────────────────────────────────────────────────────────
+function updateVitals(d, presConf) {
+    const nP = d.estimated_persons ?? (presConf ? 1 : 0);
+    setV(vP,  presConf ? String(nP) : '—', presConf);
+    setV(vHR, smoothHR  != null ? `${Math.round(smoothHR)} bpm` : '—', smoothHR != null);
+    setV(vBR, smoothBR  != null ? `${Math.round(smoothBR)} rpm` : '—', smoothBR != null);
+    const ml = d.classification?.motion_level;
+    setV(vM,  ml ? ml.slice(0,7).toUpperCase() : '—', ml && ml !== 'absent');
+}
+function setV(el, txt, on) {
+    el.textContent = txt;
+    el.className = on ? 'vval' : 'vval off';
+}
+
+// ─── Settings panel ───────────────────────────────────────────────────────────
+document.getElementById('settings-btn').addEventListener('click', () => {
+    const p0 = CFG.nodePos[0] ?? [0, 0];
+    const p1 = CFG.nodePos[1] ?? [3, 0];
+    document.getElementById('n1-pos').value = `${p0[0]}, ${p0[1]}`;
+    document.getElementById('n2-pos').value = `${p1[0]}, ${p1[1]}`;
+    document.getElementById('ws-url-input').value = CFG.wsUrl || '';
+    settingsPanel.classList.add('open');
+});
+document.getElementById('close-settings').addEventListener('click', () => {
+    const parseXY = s => { const p = s.split(',').map(Number); return [isNaN(p[0]) ? 0 : p[0], isNaN(p[1]) ? 0 : p[1]]; };
+    CFG.nodePos[0] = parseXY(document.getElementById('n1-pos').value);
+    CFG.nodePos[1] = parseXY(document.getElementById('n2-pos').value);
+    const wsu = document.getElementById('ws-url-input').value.trim();
+    CFG.wsUrl = wsu || null;
+    saveCfg();
+    settingsPanel.classList.remove('open');
+});
+
+// ─── Boot ─────────────────────────────────────────────────────────────────────
+document.getElementById('go-btn').addEventListener('click', async () => {
+    document.getElementById('splash').classList.add('gone');
+    resize();
+    startGps();
+    await startCamera();
+    connectWs();
+    requestAnimationFrame(render);
+});
+</script>
+</body>
+</html>

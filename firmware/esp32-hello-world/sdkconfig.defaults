@@ -1,7 +1,7 @@
-# ESP32 Hello World — SDK Configuration (default: ESP32-C6)
-CONFIG_IDF_TARGET="esp32c6"
+# ESP32 Hello World — SDK Configuration (default: ESP32 DevKitV1)
+CONFIG_IDF_TARGET="esp32"
 
-# Flash: 4MB (this chip has Embedded Flash 4MB)
+# Flash: 4MB (standard DevKitV1 flash size)
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
 
@@ -13,6 +13,3 @@ CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 
 # Bigger main task stack for printf-heavy capability dump
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
-
-# Enable temperature sensor driver
-CONFIG_SOC_TEMP_SENSOR_SUPPORTED=y

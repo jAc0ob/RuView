@@ -1,0 +1,50 @@
+# ESP32 DevKitV1 CSI Node — SDK Configuration
+# For original ESP32 (WROOM-32 / DevKitV1) with 4MB flash.
+#
+# Build:
+#   idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults.esp32devkit" set-target esp32 build
+# Flash (replace COMx with your port):
+#   idf.py -p COMx flash
+# Flash both boards at once (separate commands):
+#   idf.py -p COM3 flash
+#   idf.py -p COM4 flash
+# Provision WiFi after flashing:
+#   python provision.py --port COMx --ssid "YourWiFi" --password "secret" --target-ip 192.168.1.20
+#
+# NOTES vs ESP32-S3:
+#   - No PSRAM: CSI frame buffer reduced (52 subcarriers vs 114 on S3 @ 40 MHz)
+#   - No EXTRA_IRAM_OPT: not available on original ESP32 WiFi driver
+#   - Display support disabled: no SPI-LCD HAL adapted for original ESP32
+#   - OTA partition fits in 4MB with size-optimized build
+
+CONFIG_IDF_TARGET="esp32"
+
+# 4MB flash with OTA layout
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_4mb.csv"
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+
+# Optimize for size — required on 4MB
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
+# Enable CSI (Channel State Information)
+CONFIG_ESP_WIFI_CSI_ENABLED=y
+
+# Reduce logging to save flash space
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# LWIP extended socket options for UDP stream
+CONFIG_LWIP_SO_RCVBUF=y
+
+# Main task stack for CSI processing
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# ADR-081: Timer Svc stack — adaptive_controller does network I/O in timer callbacks
+CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=8192
+
+# Increase WiFi static RX buffer count — original ESP32 has no PSRAM,
+# so keep this conservative to avoid OOM
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=6
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=16

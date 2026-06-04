@@ -175,7 +175,9 @@ void app_main(void)
 
     /* Turn off onboard WS2812 LED.
      * S3 dev boards put the LED on GPIO 38; C6 dev boards on GPIO 8.
-     * On C6, GPIO 38 doesn't exist (only 0-30) — gate the init by target. */
+     * DevKitV1 (original ESP32) has no WS2812 — skip to avoid asserting on
+     * input-only GPIO 38 (GPIO34-39 are input-only on original ESP32). */
+#if !defined(CONFIG_IDF_TARGET_ESP32)
 #if defined(CONFIG_IDF_TARGET_ESP32C6)
     const int led_gpio = 8;
 #else
@@ -196,6 +198,7 @@ void app_main(void)
     if (led_strip_new_rmt_device(&strip_config, &rmt_config, &led_strip) == ESP_OK) {
         led_strip_clear(led_strip);
     }
+#endif /* !CONFIG_IDF_TARGET_ESP32 */
 
     /* ADR-110 P4: 802.15.4 mesh time-sync (C6 only).
      * Initialized BEFORE WiFi so it's available even when WiFi STA can't
